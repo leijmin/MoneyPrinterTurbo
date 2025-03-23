@@ -17,7 +17,8 @@ from moviepy import (
 )
 from moviepy.video.tools.subtitles import SubtitlesClip
 from PIL import ImageFont
-
+import json
+import subprocess
 from app.models import const
 from app.models.schema import (
     MaterialInfo,
@@ -45,6 +46,96 @@ def get_bgm_file(bgm_type: str = "random", bgm_file: str = ""):
 
     return ""
 
+def get_video_rotation(video_path: str) -> int:
+    """获取视频旋转元数据，支持displaymatrix和rotate标签"""
+    try:
+        # 获取常规rotate标签
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream_tags=rotate",
+            "-of", "csv=p=0",
+            video_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        rotation_str = result.stdout.strip()
+        
+        # 如果没有rotate标签，尝试获取displaymatrix信息
+        if not rotation_str:
+            cmd = [
+                "ffprobe",
+                "-v", "error", 
+                "-select_streams", "v:0",
+                "-show_entries", "side_data=rotation",
+                "-of", "json",
+                video_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            try:
+                data = json.loads(result.stdout)
+                for stream in data.get("streams", []):
+                    for side_data in stream.get("side_data_list", []):
+                        if side_data.get("side_data_type") == "Display Matrix":
+                            rotation_str = str(side_data.get("rotation", 0))
+                            break
+                
+                # 还是没有找到，尝试查找displaymatrix字段
+                if not rotation_str:
+                    cmd = [
+                        "ffprobe",
+                        "-v", "error", 
+                        "-select_streams", "v:0",
+                        "-show_entries", "side_data",
+                        "-of", "json",
+                        video_path
+                    ]
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    if "rotation of -90" in result.stdout:
+                        return 90  # -90度逆时针等于90度顺时针
+                    elif "rotation of 90" in result.stdout:
+                        return 270  # 90度顺时针在旋转处理中等同于270度角
+                    elif "rotation of 180" in result.stdout or "rotation of -180" in result.stdout:
+                        return 180
+            except:
+                pass
+
+        # 把字符串转换为整数
+        if rotation_str:
+            # 处理负角度（如 -90）
+            if rotation_str.startswith('-'):
+                # 负角度需要转换为正角度
+                angle = int(rotation_str)
+                if angle == -90:
+                    return 90
+                elif angle == -270:
+                    return 270
+                else:
+                    return abs(angle) % 360
+            else:
+                return int(float(rotation_str)) % 360
+            
+        return 0
+    except Exception as e:
+        logger.warning(f"获取视频旋转信息失败: {str(e)}")
+        return 0
+
+def get_video_codec(video_path: str) -> str:
+    """获取视频编码格式"""
+    try:
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name",
+            "-of", "csv=p=0",
+            video_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        return result.stdout.strip()
+    except:
+        return "unknown"
+    
 
 def combine_videos(
     combined_video_path: str,
@@ -55,7 +146,11 @@ def combine_videos(
     video_transition_mode: VideoTransitionMode = None,
     max_clip_duration: int = 5,
     threads: int = 2,
-) -> str:
+):
+    # 在函数开始处导入
+    # from moviepy.video.fx.rotate import rotate
+    # from moviepy.video.fx.all import rotate
+    
     audio_clip = AudioFileClip(audio_file)
     audio_duration = audio_clip.duration
     logger.info(f"max duration of audio: {audio_duration} seconds")
@@ -72,8 +167,47 @@ def combine_videos(
     video_duration = 0
 
     raw_clips = []
+    processed_paths = []  # 存储处理过的临时文件
+    
     for video_path in video_paths:
-        clip = VideoFileClip(video_path).without_audio()
+        try:
+            # 添加：获取视频元数据检查旋转信息
+            rotation = get_video_rotation(video_path)
+                
+            # 添加：检查文件路径判断预期方向
+            expected_portrait = "竖屏" in video_path
+
+            # 添加：使用ffprobe检查编码格式（H.264/H.265）
+            codec = get_video_codec(video_path)
+            logger.info(f"加载视频: {video_path}, 旋转角度: {rotation}°, 编码: {codec}")
+            
+            # 对于HEVC编码视频进行预处理
+            if "hevc" in codec.lower() or "h265" in codec.lower():
+                processed_path = preprocess_hevc_video(video_path)
+                if processed_path != video_path:
+                    processed_paths.append(processed_path)
+                    video_path = processed_path
+                    logger.info(f"使用预处理后的视频: {video_path}")
+                
+            # 读取视频片段
+            clip = VideoFileClip(video_path).without_audio()
+            
+            # 处理可能仍需要的旋转
+            if rotation in [90, 270]:
+                logger.info(f"视频需要旋转 {rotation}°: {video_path}")
+                if rotation == 90:
+                    clip = clip.rotate(90)  # 使用MoviePy的rotate方法
+                elif rotation == 270:
+                    clip = clip.rotate(-90)  # 使用MoviePy的rotate方法
+            
+            # 添加：如果路径指示竖屏但视频是横屏，强制旋转
+            elif expected_portrait and clip.w > clip.h:
+                logger.info(f"根据路径强制旋转视频: {video_path}")
+                clip = clip.rotate(90)  # 使用MoviePy的rotate方法
+        
+        except Exception as e:
+            logger.error(f"处理视频失败: {video_path}, 错误: {str(e)}")
+            continue
         clip_duration = clip.duration
         start_time = 0
 
@@ -179,6 +313,16 @@ def combine_videos(
     )
     video_clip.close()
     logger.success("completed")
+
+    # 函数结束前清理临时文件
+    try:
+        for temp_path in processed_paths:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+                logger.info(f"已删除临时处理文件: {temp_path}")
+    except Exception as e:
+        logger.warning(f"清理临时文件失败: {str(e)}")
+
     return combined_video_path
 
 
@@ -366,46 +510,150 @@ def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
             continue
 
         ext = utils.parse_extension(material.url)
-        try:
-            clip = VideoFileClip(material.url)
-        except Exception:
-            clip = ImageClip(material.url)
-
-        width = clip.size[0]
-        height = clip.size[1]
-        if width < 480 or height < 480:
-            logger.warning(f"video is too small, width: {width}, height: {height}")
+        
+        # 先检查文件是否真的存在
+        if not os.path.exists(material.url):
+            logger.error(f"文件不存在: {material.url}")
             continue
-
+            
+        # 先确认文件类型，避免错误尝试
         if ext in const.FILE_TYPE_IMAGES:
-            logger.info(f"processing image: {material.url}")
-            # Create an image clip and set its duration to 3 seconds
-            clip = (
-                ImageClip(material.url)
-                .with_duration(clip_duration)
-                .with_position("center")
-            )
-            # Apply a zoom effect using the resize method.
-            # A lambda function is used to make the zoom effect dynamic over time.
-            # The zoom effect starts from the original size and gradually scales up to 120%.
-            # t represents the current time, and clip.duration is the total duration of the clip (3 seconds).
-            # Note: 1 represents 100% size, so 1.2 represents 120% size.
-            zoom_clip = clip.resized(
-                lambda t: 1 + (clip_duration * 0.03) * (t / clip.duration)
-            )
-
-            # Optionally, create a composite video clip containing the zoomed clip.
-            # This is useful when you want to add other elements to the video.
-            final_clip = CompositeVideoClip([zoom_clip])
-
-            # Output the video to a file.
-            video_file = f"{material.url}.mp4"
-            final_clip.write_videofile(video_file, fps=30, logger=None)
-            final_clip.close()
-            del final_clip
-            material.url = video_file
-            logger.success(f"completed: {video_file}")
+            # 图片处理逻辑
+            logger.info(f"处理图片: {material.url}")
+            try:
+                clip = ImageClip(material.url).with_duration(clip_duration).with_position("center")
+                # 创建缩放效果
+                zoom_clip = clip.resize(lambda t: 1 + (clip_duration * 0.03) * (t / clip.duration))
+                final_clip = CompositeVideoClip([zoom_clip])
+                video_file = f"{material.url}.mp4"
+                final_clip.write_videofile(video_file, fps=30, logger=None)
+                material.url = video_file
+                logger.success(f"图片处理完成: {video_file}")
+            except Exception as e:
+                logger.error(f"处理图片失败: {material.url}, 错误: {str(e)}")
+                continue
+                
+        elif ext in const.FILE_TYPE_VIDEOS:
+            # 视频处理逻辑
+            logger.info(f"处理视频: {material.url}")
+            try:
+                # 获取编码和旋转信息
+                codec = get_video_codec(material.url)
+                rotation = get_video_rotation(material.url)
+                
+                # 对于HEVC编码可以添加特殊处理
+                if "hevc" in codec.lower() or "h265" in codec.lower():
+                    logger.info(f"检测到HEVC编码视频: {material.url}")
+                    processed_path = preprocess_hevc_video(material.url)
+                    if processed_path != material.url:
+                        material.url = processed_path
+                        logger.info(f"使用预处理后的视频: {material.url}")
+                
+            except Exception as e:
+                logger.error(f"处理视频失败: {material.url}, 错误类型: {type(e).__name__}, 错误信息: {str(e)}")
+                continue
+        else:
+            logger.warning(f"不支持的文件类型: {material.url}")
+            continue
+            
     return materials
+
+
+def force_reencode_video(video_path: str, output_path: str = None, rotation: int = 0) -> str:
+    """强制重新编码视频为完全兼容的格式"""
+    if output_path is None:
+        filename = os.path.basename(video_path)
+        dirname = os.path.dirname(video_path)
+        output_path = os.path.join(dirname, f"converted_{filename}")
+    
+    # 检查是否已经存在
+    if os.path.exists(output_path):
+        return output_path
+        
+    try:
+        # 创建临时目录
+        temp_dir = os.path.join(os.path.dirname(output_path), "temp_video")
+        os.makedirs(temp_dir, exist_ok=True)
+        temp_output = os.path.join(temp_dir, "temp_output.mp4")
+        
+        # 构建旋转参数
+        rotate_filter = ""
+        if rotation == 90:
+            rotate_filter = "transpose=2"  # 逆时针旋转90度
+        elif rotation == 270:
+            rotate_filter = "transpose=1"  # 顺时针旋转90度
+        elif rotation == 180:
+            rotate_filter = "transpose=2,transpose=2"  # 旋转180度
+            
+        # 尝试简单的图像提取和重建方法，直接从视频中提取帧并重建
+        extract_frames_cmd = [
+            "ffmpeg", "-y", "-i", video_path,
+            "-qscale:v", "1",  # 高质量 JPG
+            "-r", "30", # 提取帧率
+        ]
+        
+        # 添加旋转滤镜
+        if rotate_filter:
+            extract_frames_cmd.extend(["-vf", rotate_filter])
+            
+        # 输出到临时目录
+        frames_pattern = os.path.join(temp_dir, "frame_%04d.jpg")
+        extract_frames_cmd.append(frames_pattern)
+        
+        # 执行提取帧命令
+        logger.info(f"从视频中提取帧: {video_path}")
+        subprocess.run(extract_frames_cmd, capture_output=True, check=True)
+        
+        # 重建视频
+        rebuild_cmd = [
+            "ffmpeg", "-y",
+            "-framerate", "30",
+            "-i", frames_pattern,
+            "-i", video_path,  # 用于获取音频
+            "-map", "0:v",  # 使用第一个输入的视频流
+            "-map", "1:a",  # 使用第二个输入的音频流
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",  # 8位色深
+            "-c:a", "aac",
+            "-shortest",  # 确保音视频长度匹配
+            "-vf", "format=yuv420p",  # 强制色彩格式
+            output_path
+        ]
+        
+        # 执行重建命令
+        logger.info(f"重新构建视频: {output_path}")
+        subprocess.run(rebuild_cmd, capture_output=True, check=True)
+        
+        # 清理临时文件
+        try:
+            import shutil
+            shutil.rmtree(temp_dir)
+        except:
+            logger.warning(f"清理临时文件失败")
+            
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            logger.success(f"视频重编码成功: {output_path}")
+            return output_path
+        else:
+            logger.error(f"视频重编码失败")
+            return video_path
+    except Exception as e:
+        logger.error(f"视频重编码失败: {str(e)}")
+        return video_path
+
+
+def preprocess_hevc_video(video_path: str) -> str:
+    """预处理HEVC编码的视频，转换为更兼容的格式"""
+    try:
+        # 获取视频旋转信息
+        rotation = get_video_rotation(video_path)
+        logger.info(f"检测到视频旋转角度: {rotation}°")
+        
+        # 使用简化的编码方案，完全兼容MoviePy
+        return force_reencode_video(video_path, rotation=rotation)
+    except Exception as e:
+        logger.error(f"预处理HEVC视频出错: {str(e)}")
+        return video_path
 
 
 if __name__ == "__main__":
