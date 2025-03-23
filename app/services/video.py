@@ -8,6 +8,7 @@ import json
 import subprocess
 import shutil
 import uuid
+import math
 
 from loguru import logger
 from PIL import ImageFont
@@ -698,7 +699,7 @@ def generate_video(
     params: VideoParams,
 ):
     """
-    使用ffmpeg生成视频，完全不依赖MoviePy
+    使用MoviePy生成视频，如果失败则尝试使用纯ffmpeg方法
     
     Args:
         video_path: 视频文件路径
@@ -710,15 +711,481 @@ def generate_video(
     Returns:
         生成的视频文件路径或None
     """
-    # 调用纯ffmpeg实现
-    logger.info("使用纯ffmpeg方法生成视频")
-    return generate_video_ffmpeg(
-        video_path=video_path,
-        audio_path=audio_path,
-        subtitle_path=subtitle_path,
-        output_file=output_file,
-        params=params
+    try:
+        # 导入MoviePy模块
+        try:
+            import moviepy.editor as mp
+            from moviepy.video.tools.subtitles import SubtitlesClip
+            from moviepy.video.fx.all import resize
+        except ImportError as e:
+            return generate_video_ffmpeg(
+                video_path=video_path,
+                audio_path=audio_path,
+                subtitle_path=subtitle_path,
+                output_file=output_file,
+                params=params
+            )
+            
+        logger.info(f"使用MoviePy生成视频")
+        
+        # 先修复视频确保兼容MoviePy
+        processed_video_path = fix_video_for_moviepy(video_path)
+        
+        # 检查处理后的视频能否被MoviePy读取
+        try:
+            video_clip = mp.VideoFileClip(processed_video_path)
+        except Exception as e:
+            logger.error(f"MoviePy无法读取视频，将使用纯ffmpeg方案: {e}")
+            return generate_video_ffmpeg(
+                video_path=video_path,
+                audio_path=audio_path,
+                subtitle_path=subtitle_path,
+                output_file=output_file,
+                params=params
+            )
+            
+        # MoviePy处理逻辑
+        logger.info(f"视频尺寸: {video_clip.size}")
+        aspect = VideoAspect(params.video_aspect)
+        video_width, video_height = aspect.to_resolution()
+        
+        # 调整视频尺寸
+        logger.info(f"调整视频尺寸至: {video_width}x{video_height}")
+        resized_clip = resize(video_clip, width=video_width, height=video_height)
+        
+        # 处理音频
+        logger.info(f"处理音频: {audio_path}")
+        audio_clip = mp.AudioFileClip(audio_path)
+        audio_clip = audio_clip.volumex(params.voice_volume)
+        
+        # 处理背景音乐
+        bgm_file = get_bgm_file(bgm_type=params.bgm_type, bgm_file=params.bgm_file)
+        if bgm_file and os.path.exists(bgm_file):
+            logger.info(f"添加背景音乐: {bgm_file}")
+            bgm_clip = mp.AudioFileClip(bgm_file)
+            bgm_clip = bgm_clip.volumex(params.bgm_volume)
+            
+            # 确保背景音乐长度与主音频相同
+            if bgm_clip.duration > audio_clip.duration:
+                bgm_clip = bgm_clip.subclip(0, audio_clip.duration)
+            else:
+                # 如果背景音乐较短，循环到所需长度
+                repeats = math.ceil(audio_clip.duration / bgm_clip.duration)
+                bgm_clip = mp.concatenate_audioclips([bgm_clip] * repeats)
+                bgm_clip = bgm_clip.subclip(0, audio_clip.duration)
+            
+            # 混合两个音频
+            final_audio = mp.CompositeAudioClip([audio_clip, bgm_clip])
+        else:
+            final_audio = audio_clip
+        
+        # 设置视频音频
+        video_with_audio = resized_clip.set_audio(final_audio)
+        
+        # 处理字幕
+        if subtitle_path and os.path.exists(subtitle_path) and params.subtitle_enabled:
+            logger.info(f"添加字幕: {subtitle_path}")
+            # 准备字体
+            if not params.font_name:
+                params.font_name = "STHeitiMedium.ttc"
+            font_path = os.path.join(utils.font_dir(), params.font_name)
+            
+            # 加载字幕
+            generator = lambda txt: mp.TextClip(
+                txt, 
+                font=font_path, 
+                fontsize=params.font_size, 
+                color=params.text_fore_color,
+                stroke_color=params.stroke_color,
+                stroke_width=params.stroke_width,
+                method="caption",
+                size=(video_width, None),
+                align="center"
+            )
+            
+            # 确定字幕位置
+            position = ("center", "bottom")
+            if params.subtitle_position == "top":
+                position = ("center", "top")
+            elif params.subtitle_position == "center":
+                position = ("center", "center")
+            
+            try:
+                subtitles = SubtitlesClip(subtitle_path, generator)
+                video_with_subtitles = mp.CompositeVideoClip([video_with_audio, subtitles.set_position(position)])
+                final_clip = video_with_subtitles
+            except Exception as e:
+                logger.error(f"添加字幕失败: {e}")
+                final_clip = video_with_audio
+        else:
+            final_clip = video_with_audio
+        
+        # 设置最终视频持续时间与音频相同
+        final_clip = final_clip.set_duration(final_audio.duration)
+        
+        # 导出视频
+        logger.info(f"导出视频到: {output_file}")
+        final_clip.write_videofile(
+            output_file,
+            codec="libx264",
+            audio_codec="aac",
+            temp_audiofile=os.path.join(os.path.dirname(output_file), f"temp_{uuid.uuid4()}.m4a"),
+            remove_temp=True,
+            fps=24,
+            threads=params.n_threads,
+            preset="medium",
+            bitrate="8000k"
+        )
+        
+        # 清理
+        video_clip.close()
+        audio_clip.close()
+        final_clip.close()
+        
+        if processed_video_path != video_path:
+            logger.info(f"清理临时文件: {processed_video_path}")
+            try:
+                os.remove(processed_video_path)
+            except Exception as e:
+                logger.error(f"清理临时文件失败: {e}")
+        
+        # 检查输出是否成功
+        if os.path.exists(output_file):
+            logger.success(f"视频生成成功: {os.path.basename(output_file)}")
+            return output_file
+        else:
+            logger.error("MoviePy视频生成失败")
+            return None
+            
+    except Exception as e:
+        logger.error(f"使用MoviePy生成视频出错: {str(e)}")
+        # 出错时尝试使用纯ffmpeg生成
+        logger.info("尝试使用纯ffmpeg方法...")
+        return generate_video_ffmpeg(
+            video_path=video_path,
+            audio_path=audio_path,
+            subtitle_path=subtitle_path,
+            output_file=output_file,
+            params=params
+        )
+
+
+def fix_video_for_moviepy(video_path: str, force_h264: bool = True) -> str:
+    """
+    修复视频以确保与MoviePy兼容
+    
+    Args:
+        video_path: 原始视频路径
+        force_h264: 是否强制转换为H264编码
+    
+    Returns:
+        处理后的视频路径
+    """
+    logger.info(f"开始修复视频以兼容MoviePy: {os.path.basename(video_path)}")
+    
+    # 检查视频编码
+    codec = get_video_codec(video_path)
+    logger.info(f"视频编码: {codec}")
+    
+    # 检查是否包含不兼容的元数据
+    check_cmd = ["ffprobe", "-v", "error", "-show_entries", "frame_tags=side_data_list", "-select_streams", "v", "-of", "json", video_path]
+    result = subprocess.run(check_cmd, capture_output=True, text=True)
+    has_side_data = False
+    
+    if result.returncode == 0:
+        try:
+            data = json.loads(result.stdout)
+            frames = data.get('frames', [])
+            for frame in frames:
+                if 'tags' in frame and 'side_data_list' in frame['tags']:
+                    if 'Ambient Viewing Environment' in frame['tags']['side_data_list']:
+                        has_side_data = True
+                        break
+        except Exception as e:
+            logger.error(f"解析ffprobe输出失败: {e}")
+    
+    # 确定是否需要转码
+    needs_processing = False
+    
+    # 如果是HEVC编码或包含不兼容元数据，需要转码
+    if codec == "hevc" or has_side_data or force_h264:
+        needs_processing = True
+        logger.info(f"视频需要转码处理: 编码={codec}, 包含不兼容元数据={has_side_data}")
+    
+    if not needs_processing:
+        logger.info(f"视频不需要特殊处理")
+        return video_path
+    
+    # 创建临时文件用于处理后的视频
+    processed_path = os.path.join(os.path.dirname(video_path), f"temp_fix_{uuid.uuid4()}.mp4")
+    
+    # 获取旋转角度
+    rotation = get_video_rotation(video_path)
+    rotate_filter = ""
+    if rotation == 90:
+        rotate_filter = "transpose=1,"
+    elif rotation == 180:
+        rotate_filter = "transpose=2,transpose=2,"
+    elif rotation == 270:
+        rotate_filter = "transpose=2,"
+    
+    # 构建ffmpeg命令，保留原始分辨率但确保编码兼容
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-map_metadata", "-1",  # 移除全部元数据
+        "-vf", f"{rotate_filter}format=yuv420p",  # 仅转换像素格式，不改变原分辨率
+        "-c:v", "libx264",  # 使用H.264编码
+        "-preset", "fast",  # 较快的编码速度
+        "-crf", "23",  # 控制质量
+        "-an",  # 不包含音频
+        processed_path
+    ]
+    
+    logger.info(f"执行转码命令: {' '.join(cmd)}")
+    
+    # 执行命令并显示进度
+    process = subprocess.Popen(
+        cmd, 
+        stdout=subprocess.PIPE, 
+        stderr=subprocess.PIPE, 
+        universal_newlines=True
     )
+    
+    # 显示处理进度
+    for line in process.stderr:
+        if "time=" in line and "bitrate=" in line:
+            logger.info(f"转码进度: {line.strip()}")
+    
+    process.wait()
+    
+    if process.returncode != 0 or not os.path.exists(processed_path):
+        logger.error(f"视频转码失败")
+        return video_path  # 转码失败时返回原始文件
+    
+    logger.success(f"视频修复完成: {os.path.basename(processed_path)}")
+    return processed_path
+
+
+def generate_video_ffmpeg(
+    video_path: str,
+    audio_path: str,
+    subtitle_path: str,
+    output_file: str,
+    params: VideoParams,
+):
+    """使用纯ffmpeg实现视频生成，完全不依赖MoviePy"""
+    logger.info(f"使用ffmpeg生成视频")
+    aspect = VideoAspect(params.video_aspect)
+    video_width, video_height = aspect.to_resolution()
+
+    logger.info(f"视频尺寸: {video_width} x {video_height}")
+    logger.info(f"视频: {video_path}")
+    logger.info(f"音频: {audio_path}")
+    logger.info(f"字幕: {subtitle_path}")
+    logger.info(f"输出: {output_file}")
+
+    # 创建临时目录
+    temp_dir = os.path.join(os.path.dirname(output_file), f"temp_ffmpeg_{str(uuid.uuid4())}")
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    try:
+        # 处理视频旋转和分辨率
+        processed_video = os.path.join(temp_dir, "processed_video.mp4")
+        rotation = get_video_rotation(video_path)
+        rotate_filter = ""
+        if rotation == 90:
+            rotate_filter = "transpose=1,"
+        elif rotation == 180:
+            rotate_filter = "transpose=2,transpose=2,"
+        elif rotation == 270:
+            rotate_filter = "transpose=2,"
+            
+        video_cmd = [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-vf", f"{rotate_filter}scale={video_width}:{video_height}:force_original_aspect_ratio=increase,crop={video_width}:{video_height},format=yuv420p",
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "23",
+            "-an",  # 不包含音频
+            "-map_metadata", "-1",  # 移除所有元数据
+            processed_video
+        ]
+        
+        logger.info("处理视频...")
+        video_process = subprocess.Popen(
+            video_cmd, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE, 
+            universal_newlines=True
+        )
+        
+        # 显示处理进度
+        for line in video_process.stderr:
+            if "time=" in line and "bitrate=" in line:
+                logger.info(f"视频处理进度: {line.strip()}")
+        
+        video_process.wait()
+        
+        if video_process.returncode != 0 or not os.path.exists(processed_video):
+            logger.error("视频处理失败")
+            return None
+            
+        # 获取音频信息
+        audio_probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", audio_path]
+        audio_info = json.loads(subprocess.check_output(audio_probe_cmd, universal_newlines=True))
+        audio_duration = float(audio_info["format"]["duration"])
+        
+        # 处理背景音乐
+        bgm_file = get_bgm_file(bgm_type=params.bgm_type, bgm_file=params.bgm_file)
+        processed_bgm = None
+        
+        if bgm_file and os.path.exists(bgm_file):
+            processed_bgm = os.path.join(temp_dir, "processed_bgm.mp3")
+            bgm_cmd = [
+                "ffmpeg", "-y",
+                "-i", bgm_file,
+                "-af", f"volume={params.bgm_volume},afade=t=out:st={audio_duration-3}:d=3",
+                "-to", str(audio_duration),
+                processed_bgm
+            ]
+            
+            logger.info("处理背景音乐...")
+            subprocess.run(bgm_cmd, check=True, capture_output=True)
+            
+            if not os.path.exists(processed_bgm):
+                logger.error("背景音乐处理失败")
+                processed_bgm = None
+        
+        # 处理字幕
+        subtitle_filter = ""
+        if subtitle_path and os.path.exists(subtitle_path) and params.subtitle_enabled:
+            # 准备字体
+            font_path = ""
+            if not params.font_name:
+                params.font_name = "STHeitiMedium.ttc"
+            font_path = os.path.join(utils.font_dir(), params.font_name)
+            if os.name == "nt":
+                font_path = font_path.replace("\\", "/")
+                
+            # 确定字幕位置
+            alignment = 2  # 默认底部居中
+            if params.subtitle_position == "top":
+                alignment = 8  # 顶部居中
+            elif params.subtitle_position == "center":
+                alignment = 5  # 中间居中
+                
+            # 创建ASS字幕
+            ass_subtitle = os.path.join(temp_dir, "subtitle.ass")
+            subtitle_cmd = [
+                "ffmpeg", "-y",
+                "-i", subtitle_path,
+                "-f", "ass",
+                ass_subtitle
+            ]
+            
+            logger.info("转换字幕格式...")
+            subprocess.run(subtitle_cmd, check=True, capture_output=True)
+            
+            if os.path.exists(ass_subtitle):
+                # 安全处理路径中的特殊字符
+                safe_subtitle_path = ass_subtitle.replace(":", "\\:")
+                subtitle_filter = f"subtitles={safe_subtitle_path}:force_style='FontName={params.font_name},FontSize={params.font_size},PrimaryColour=&H{params.text_fore_color[1:]}&,OutlineColour=&H{params.stroke_color[1:]}&,BorderStyle=1,Outline={params.stroke_width},Alignment={alignment}'"
+        
+        # 音频处理
+        merged_audio = os.path.join(temp_dir, "merged_audio.aac")
+        
+        if processed_bgm:
+            # 合并主音频和背景音乐
+            audio_cmd = [
+                "ffmpeg", "-y",
+                "-i", audio_path,
+                "-i", processed_bgm,
+                "-filter_complex", f"[0:a]volume={params.voice_volume}[a1];[1:a]volume={params.bgm_volume}[a2];[a1][a2]amix=inputs=2:duration=longest[aout]",
+                "-map", "[aout]",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                merged_audio
+            ]
+        else:
+            # 只处理主音频
+            audio_cmd = [
+                "ffmpeg", "-y",
+                "-i", audio_path,
+                "-af", f"volume={params.voice_volume}",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                merged_audio
+            ]
+        
+        logger.info("处理音频...")
+        subprocess.run(audio_cmd, check=True, capture_output=True)
+        
+        if not os.path.exists(merged_audio):
+            logger.error("音频处理失败")
+            return None
+        
+        # 最终合并视频、音频和字幕
+        final_cmd = [
+            "ffmpeg", "-y",
+            "-i", processed_video,
+            "-i", merged_audio
+        ]
+        
+        # 添加滤镜
+        filter_complex = []
+        
+        if subtitle_filter:
+            filter_complex.append(subtitle_filter)
+            
+        # 应用滤镜（如果有）
+        if filter_complex:
+            final_cmd.extend(["-vf", ",".join(filter_complex)])
+        
+        # 输出参数
+        final_cmd.extend([
+            "-map", "0:v",
+            "-map", "1:a",
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "23",
+            "-c:a", "copy",
+            "-shortest",
+            output_file
+        ])
+        
+        logger.info("生成最终视频...")
+        final_process = subprocess.Popen(
+            final_cmd, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE, 
+            universal_newlines=True
+        )
+        
+        # 显示处理进度
+        for line in final_process.stderr:
+            if "time=" in line and "bitrate=" in line:
+                logger.info(f"最终合成进度: {line.strip()}")
+        
+        final_process.wait()
+        
+        if final_process.returncode != 0 or not os.path.exists(output_file):
+            logger.error("最终视频生成失败")
+            return None
+            
+        logger.success(f"视频生成成功: {os.path.basename(output_file)}")
+        return output_file
+        
+    except Exception as e:
+        logger.error(f"视频生成过程中出错: {str(e)}")
+        return None
+    finally:
+        # 清理临时文件
+        try:
+            shutil.rmtree(temp_dir)
+        except Exception as e:
+            logger.error(f"清理临时文件失败: {str(e)}")
 
 
 def preprocess_video_ffmpeg(materials: List[MaterialInfo], clip_duration=4):
@@ -777,7 +1244,7 @@ def preprocess_video_ffmpeg(materials: List[MaterialInfo], clip_duration=4):
                                 "-c:v", "libx264",
                                 "-crf", "23",
                                 "-preset", "fast",
-                                "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+                                "-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,format=yuv420p",
                                 "-c:a", "aac",
                                 "-b:a", "128k",
                                 "-map_metadata", "-1",  # 移除所有元数据
@@ -945,7 +1412,7 @@ def combine_videos_ffmpeg(
                         "-ss", str(start_time),
                         "-i", video_path,
                         "-t", str(segment_duration),
-                        "-vf", f"{rotate_filter}scale={video_width}:{video_height}:force_original_aspect_ratio=decrease,pad={video_width}:{video_height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+                        "-vf", f"{rotate_filter}scale={video_width}:{video_height}:force_original_aspect_ratio=increase,crop={video_width}:{video_height},format=yuv420p",
                         "-an",  # 去除音频
                         "-c:v", "libx264",
                         "-preset", "medium",
@@ -1060,227 +1527,6 @@ def combine_videos_ffmpeg(
             
     except Exception as e:
         logger.error(f"视频合成过程中出错: {str(e)}")
-        return None
-    finally:
-        # 清理临时文件
-        try:
-            shutil.rmtree(temp_dir)
-        except Exception as e:
-            logger.error(f"清理临时文件失败: {str(e)}")
-
-
-def generate_video_ffmpeg(
-    video_path: str,
-    audio_path: str,
-    subtitle_path: str,
-    output_file: str,
-    params: VideoParams,
-):
-    """使用纯ffmpeg实现视频生成，完全不依赖MoviePy"""
-    logger.info(f"使用ffmpeg生成视频")
-    aspect = VideoAspect(params.video_aspect)
-    video_width, video_height = aspect.to_resolution()
-
-    logger.info(f"视频尺寸: {video_width} x {video_height}")
-    logger.info(f"视频: {video_path}")
-    logger.info(f"音频: {audio_path}")
-    logger.info(f"字幕: {subtitle_path}")
-    logger.info(f"输出: {output_file}")
-
-    # 创建临时目录
-    temp_dir = os.path.join(os.path.dirname(output_file), f"temp_ffmpeg_{str(uuid.uuid4())}")
-    os.makedirs(temp_dir, exist_ok=True)
-    
-    try:
-        # 处理视频旋转和分辨率
-        processed_video = os.path.join(temp_dir, "processed_video.mp4")
-        rotation = get_video_rotation(video_path)
-        rotate_filter = ""
-        if rotation == 90:
-            rotate_filter = "transpose=1,"
-        elif rotation == 180:
-            rotate_filter = "transpose=2,transpose=2,"
-        elif rotation == 270:
-            rotate_filter = "transpose=2,"
-            
-        video_cmd = [
-            "ffmpeg", "-y",
-            "-i", video_path,
-            "-vf", f"{rotate_filter}scale={video_width}:{video_height}:force_original_aspect_ratio=decrease,pad={video_width}:{video_height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
-            "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", "23",
-            "-an",  # 不包含音频
-            "-map_metadata", "-1",  # 移除所有元数据
-            processed_video
-        ]
-        
-        logger.info("处理视频...")
-        video_process = subprocess.Popen(
-            video_cmd, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE, 
-            universal_newlines=True
-        )
-        
-        # 显示处理进度
-        for line in video_process.stderr:
-            if "time=" in line and "bitrate=" in line:
-                logger.info(f"视频处理进度: {line.strip()}")
-        
-        video_process.wait()
-        
-        if video_process.returncode != 0 or not os.path.exists(processed_video):
-            logger.error("视频处理失败")
-            return None
-            
-        # 获取音频信息
-        audio_probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", audio_path]
-        audio_info = json.loads(subprocess.check_output(audio_probe_cmd, universal_newlines=True))
-        audio_duration = float(audio_info["format"]["duration"])
-        
-        # 处理背景音乐
-        bgm_file = get_bgm_file(bgm_type=params.bgm_type, bgm_file=params.bgm_file)
-        processed_bgm = None
-        
-        if bgm_file and os.path.exists(bgm_file):
-            processed_bgm = os.path.join(temp_dir, "processed_bgm.mp3")
-            bgm_cmd = [
-                "ffmpeg", "-y",
-                "-i", bgm_file,
-                "-af", f"volume={params.bgm_volume},afade=t=out:st={audio_duration-3}:d=3",
-                "-to", str(audio_duration),
-                processed_bgm
-            ]
-            
-            logger.info("处理背景音乐...")
-            subprocess.run(bgm_cmd, check=True, capture_output=True)
-            
-            if not os.path.exists(processed_bgm):
-                logger.error("背景音乐处理失败")
-                processed_bgm = None
-        
-        # 处理字幕
-        subtitle_filter = ""
-        if subtitle_path and os.path.exists(subtitle_path) and params.subtitle_enabled:
-            # 准备字体
-            font_path = ""
-            if not params.font_name:
-                params.font_name = "STHeitiMedium.ttc"
-            font_path = os.path.join(utils.font_dir(), params.font_name)
-            if os.name == "nt":
-                font_path = font_path.replace("\\", "/")
-                
-            # 确定字幕位置
-            position = "bottom"  # 默认底部
-            if params.subtitle_position == "top":
-                position = "top"
-            elif params.subtitle_position == "center":
-                position = "center"
-                
-            # 创建ASS字幕
-            ass_subtitle = os.path.join(temp_dir, "subtitle.ass")
-            subtitle_cmd = [
-                "ffmpeg", "-y",
-                "-i", subtitle_path,
-                "-f", "ass",
-                ass_subtitle
-            ]
-            
-            logger.info("转换字幕格式...")
-            subprocess.run(subtitle_cmd, check=True, capture_output=True)
-            
-            if os.path.exists(ass_subtitle):
-                # 安全处理路径中的特殊字符
-                safe_subtitle_path = ass_subtitle.replace(":", "\\:")
-                subtitle_filter = f"subtitles={safe_subtitle_path}:force_style='FontName={params.font_name},FontSize={params.font_size},PrimaryColour=&H{params.text_fore_color[1:]}&,OutlineColour=&H{params.stroke_color[1:]}&,BorderStyle=1,Outline={params.stroke_width},Alignment=2'"
-        
-        # 音频处理
-        merged_audio = os.path.join(temp_dir, "merged_audio.aac")
-        
-        if processed_bgm:
-            # 合并主音频和背景音乐
-            audio_cmd = [
-                "ffmpeg", "-y",
-                "-i", audio_path,
-                "-i", processed_bgm,
-                "-filter_complex", f"[0:a]volume={params.voice_volume}[a1];[1:a]volume={params.bgm_volume}[a2];[a1][a2]amix=inputs=2:duration=longest[aout]",
-                "-map", "[aout]",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                merged_audio
-            ]
-        else:
-            # 只处理主音频
-            audio_cmd = [
-                "ffmpeg", "-y",
-                "-i", audio_path,
-                "-af", f"volume={params.voice_volume}",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                merged_audio
-            ]
-        
-        logger.info("处理音频...")
-        subprocess.run(audio_cmd, check=True, capture_output=True)
-        
-        if not os.path.exists(merged_audio):
-            logger.error("音频处理失败")
-            return None
-        
-        # 最终合并视频、音频和字幕
-        final_cmd = [
-            "ffmpeg", "-y",
-            "-i", processed_video,
-            "-i", merged_audio
-        ]
-        
-        # 添加滤镜
-        filter_complex = []
-        
-        if subtitle_filter:
-            filter_complex.append(subtitle_filter)
-            
-        # 应用滤镜（如果有）
-        if filter_complex:
-            final_cmd.extend(["-vf", ",".join(filter_complex)])
-        
-        # 输出参数
-        final_cmd.extend([
-            "-map", "0:v",
-            "-map", "1:a",
-            "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", "23",
-            "-c:a", "copy",
-            "-shortest",
-            output_file
-        ])
-        
-        logger.info("生成最终视频...")
-        final_process = subprocess.Popen(
-            final_cmd, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE, 
-            universal_newlines=True
-        )
-        
-        # 显示处理进度
-        for line in final_process.stderr:
-            if "time=" in line and "bitrate=" in line:
-                logger.info(f"最终合成进度: {line.strip()}")
-        
-        final_process.wait()
-        
-        if final_process.returncode != 0 or not os.path.exists(output_file):
-            logger.error("最终视频生成失败")
-            return None
-            
-        logger.success(f"视频生成成功: {os.path.basename(output_file)}")
-        return output_file
-        
-    except Exception as e:
-        logger.error(f"视频生成过程中出错: {str(e)}")
         return None
     finally:
         # 清理临时文件
