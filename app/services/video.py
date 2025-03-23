@@ -6,22 +6,10 @@ import time
 import re
 import json
 import subprocess
-import shutil  # 添加shutil导入
+import shutil
 import uuid
 
 from loguru import logger
-from moviepy import (
-    AudioFileClip,
-    ColorClip,
-    CompositeAudioClip,
-    CompositeVideoClip,
-    ImageClip,
-    TextClip,
-    VideoFileClip,
-    afx,
-    concatenate_videoclips,
-)
-from moviepy.video.tools.subtitles import SubtitlesClip
 from PIL import ImageFont
 
 from app.models import const
@@ -32,7 +20,6 @@ from app.models.schema import (
     VideoParams,
     VideoTransitionMode,
 )
-from app.services.utils import video_effects
 from app.utils import utils
 
 
@@ -213,1059 +200,34 @@ def combine_videos(
     max_clip_duration: int = 5,
     threads: int = 2,
 ) -> str:
-    processed_paths = []  # 用于记录需要清理的临时文件
-    
-    try:
-        # 首先检查所有文件是否存在
-        if not video_paths:
-            logger.error("没有输入视频文件")
-            return None
-            
-        if not os.path.exists(audio_file):
-            logger.error(f"音频文件不存在: {audio_file}")
-            return None
-            
-        # 预处理视频列表，处理HEVC编码和旋转问题
-        processed_video_paths = []
-        
-        for idx, video_path in enumerate(video_paths):
-            try:
-                if not os.path.exists(video_path):
-                    logger.error(f"视频文件不存在: {video_path}")
-                    continue
-                    
-                # 获取视频信息
-                rotation = get_video_rotation(video_path)
-                codec = get_video_codec(video_path)
-                logger.info(f"处理视频 {idx+1}/{len(video_paths)}: {os.path.basename(video_path)}")
-                logger.info(f"旋转: {rotation}°, 编码: {codec}")
-                
-                # 对HEVC编码视频进行预处理
-                if "hevc" in codec.lower() or "h265" in codec.lower():
-                    processed_path = preprocess_hevc_video(video_path)
-                    if processed_path != video_path:
-                        processed_paths.append(processed_path)
-                        video_path = processed_path
-                        logger.info(f"使用预处理后的视频: {os.path.basename(video_path)}")
-                
-                # 检查旋转角度
-                if rotation in [90, 270, 180]:
-                    fixed_path = fix_video_for_moviepy(video_path, rotation=rotation)
-                    if fixed_path != video_path:
-                        processed_paths.append(fixed_path)
-                        video_path = fixed_path
-                        logger.info(f"使用旋转修正后的视频: {os.path.basename(video_path)}")
-                
-                processed_video_paths.append(video_path)
-                        
-            except Exception as e:
-                logger.error(f"视频处理失败，将跳过: {os.path.basename(video_path)}, 错误: {str(e)}")
-                continue
-        
-        # 如果没有可用的视频，直接返回
-        if not processed_video_paths:
-            logger.error("没有可用的视频，合成失败")
-            return None
-            
-        # 使用原始的MoviePy逻辑处理视频
-        video_paths = processed_video_paths
-        
-        # 以下是原始的combine_videos函数逻辑
-        audio_clip = AudioFileClip(audio_file)
-        audio_duration = audio_clip.duration
-        logger.info(f"max duration of audio: {audio_duration} seconds")
-        # Required duration of each clip
-        req_dur = audio_duration / len(video_paths)
-        req_dur = max_clip_duration
-        logger.info(f"each clip will be maximum {req_dur} seconds long")
-        output_dir = os.path.dirname(combined_video_path)
-
-        aspect = VideoAspect(video_aspect)
-        video_width, video_height = aspect.to_resolution()
-
-        clips = []
-        video_duration = 0
-
-        raw_clips = []
-        for video_path in video_paths:
-            try:
-                clip = VideoFileClip(video_path).without_audio()
-                clip_duration = clip.duration
-                start_time = 0
-
-                while start_time < clip_duration:
-                    end_time = min(start_time + max_clip_duration, clip_duration)
-                    split_clip = clip.subclipped(start_time, end_time)
-                    raw_clips.append(split_clip)
-                    start_time = end_time
-                    if video_concat_mode.value == VideoConcatMode.sequential.value:
-                        break
-            except Exception as e:
-                logger.error(f"读取视频失败: {video_path}, 错误: {str(e)}")
-                continue
-
-        # random video_paths order
-        if video_concat_mode.value == VideoConcatMode.random.value:
-            random.shuffle(raw_clips)
-
-        # Add downloaded clips over and over until the duration of the audio (max_duration) has been reached
-        while video_duration < audio_duration and raw_clips:
-            for clip in raw_clips[:]:  # 使用副本遍历，避免修改迭代中的列表
-                if not raw_clips:  # 如果列表已空，退出循环
-                    break
-                    
-                # Check if clip is longer than the remaining audio
-                if (audio_duration - video_duration) < clip.duration:
-                    clip = clip.subclipped(0, (audio_duration - video_duration))
-                # Only shorten clips if the calculated clip length (req_dur) is shorter than the actual clip to prevent still image
-                elif req_dur < clip.duration:
-                    clip = clip.subclipped(0, req_dur)
-                clip = clip.with_fps(30)
-
-                # Not all videos are same size, so we need to resize them
-                clip_w, clip_h = clip.size
-                if clip_w != video_width or clip_h != video_height:
-                    clip_ratio = clip.w / clip.h
-                    video_ratio = video_width / video_height
-
-                    if clip_ratio == video_ratio:
-                        # Resize proportionally
-                        clip = clip.resized((video_width, video_height))
-                    else:
-                        # Resize proportionally
-                        if clip_ratio > video_ratio:
-                            # Resize proportionally based on the target width
-                            scale_factor = video_width / clip_w
-                        else:
-                            # Resize proportionally based on the target height
-                            scale_factor = video_height / clip_h
-
-                        new_width = int(clip_w * scale_factor)
-                        new_height = int(clip_h * scale_factor)
-                        clip_resized = clip.resized(new_size=(new_width, new_height))
-
-                        background = ColorClip(
-                            size=(video_width, video_height), color=(0, 0, 0)
-                        )
-                        clip = CompositeVideoClip(
-                            [
-                                background.with_duration(clip.duration),
-                                clip_resized.with_position("center"),
-                            ]
-                        )
-
-                    logger.info(
-                        f"resizing video to {video_width} x {video_height}, clip size: {clip_w} x {clip_h}"
-                    )
-
-                shuffle_side = random.choice(["left", "right", "top", "bottom"])
-                logger.info(f"Using transition mode: {video_transition_mode}")
-                if video_transition_mode is None or video_transition_mode.value == VideoTransitionMode.none.value:
-                    clip = clip
-                elif video_transition_mode.value == VideoTransitionMode.fade_in.value:
-                    clip = video_effects.fadein_transition(clip, 1)
-                elif video_transition_mode.value == VideoTransitionMode.fade_out.value:
-                    clip = video_effects.fadeout_transition(clip, 1)
-                elif video_transition_mode.value == VideoTransitionMode.slide_in.value:
-                    clip = video_effects.slidein_transition(clip, 1, shuffle_side)
-                elif video_transition_mode.value == VideoTransitionMode.slide_out.value:
-                    clip = video_effects.slideout_transition(clip, 1, shuffle_side)
-                elif video_transition_mode.value == VideoTransitionMode.shuffle.value:
-                    transition_funcs = [
-                        lambda c: video_effects.fadein_transition(c, 1),
-                        lambda c: video_effects.fadeout_transition(c, 1),
-                        lambda c: video_effects.slidein_transition(c, 1, shuffle_side),
-                        lambda c: video_effects.slideout_transition(c, 1, shuffle_side),
-                    ]
-                    shuffle_transition = random.choice(transition_funcs)
-                    clip = shuffle_transition(clip)
-
-                if clip.duration > max_clip_duration:
-                    clip = clip.subclipped(0, max_clip_duration)
-
-                clips.append(clip)
-                video_duration += clip.duration
-                
-                # 如果已达到所需时长，跳出循环
-                if video_duration >= audio_duration:
-                    break
-                    
-        clips = [CompositeVideoClip([clip]) for clip in clips]
-        video_clip = concatenate_videoclips(clips)
-        video_clip = video_clip.with_fps(30)
-        logger.info("开始写入视频文件")
-        
-        # https://github.com/harry0703/MoneyPrinterTurbo/issues/111#issuecomment-2032354030
-        video_clip.write_videofile(
-            filename=combined_video_path,
-            threads=threads,
-            logger=None,
-            temp_audiofile_path=output_dir,
-            audio_codec="aac",
-            fps=30,
-        )
-        video_clip.close()
-        logger.success("合成完成")
-        return combined_video_path
-        
-    except Exception as e:
-        logger.error(f"视频合成过程失败: {str(e)}", exc_info=True)
-        
-        # 如果MoviePy处理失败，尝试使用ffmpeg
-        try:
-            logger.warning("尝试使用ffmpeg方案继续处理")
-            return combine_videos_with_ffmpeg(
-                combined_video_path=combined_video_path,
-                video_paths=processed_video_paths or video_paths,
-                audio_file=audio_file,
-                video_aspect=video_aspect,
-                max_clip_duration=max_clip_duration,
-                threads=threads
-            )
-        except Exception as e2:
-            logger.error(f"ffmpeg处理也失败: {str(e2)}")
-            return None
-    finally:
-        # 清理临时文件
-        try:
-            for temp_path in processed_paths:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-                    logger.info(f"已删除临时处理文件: {temp_path}")
-        except Exception as e:
-            logger.warning(f"清理临时文件失败: {str(e)}")
-
-# 辅助函数，用于调整视频大小以适应目标宽高比
-def resize_clip_to_aspect(clip, target_width, target_height):
-    clip_w, clip_h = clip.size
-    
-    if clip_w != target_width or clip_h != target_height:
-        clip_ratio = clip.w / clip.h
-        target_ratio = target_width / target_height
-
-        if clip_ratio == target_ratio:
-            # 直接调整大小
-            return clip.resized((target_width, target_height))
-        else:
-            # 按比例调整大小，保持原始宽高比
-            if clip_ratio > target_ratio:
-                # 基于目标宽度调整大小
-                scale_factor = target_width / clip_w
-            else:
-                # 基于目标高度调整大小
-                scale_factor = target_height / clip_h
-
-            new_width = int(clip_w * scale_factor)
-            new_height = int(clip_h * scale_factor)
-            clip_resized = clip.resized(new_size=(new_width, new_height))
-
-            # 创建背景
-            background = ColorClip(
-                size=(target_width, target_height), color=(0, 0, 0)
-            )
-            
-            # 创建复合视频剪辑
-            return CompositeVideoClip(
-                [
-                    background.with_duration(clip.duration),
-                    clip_resized.with_position("center"),
-                ]
-            )
-    
-    return clip
-
-# 辅助函数，应用过渡效果
-def apply_transition(clip, transition_mode):
-    shuffle_side = random.choice(["left", "right", "top", "bottom"])
-    
-    if transition_mode.value == VideoTransitionMode.fade_in.value:
-        return video_effects.fadein_transition(clip, 1)
-    elif transition_mode.value == VideoTransitionMode.fade_out.value:
-        return video_effects.fadeout_transition(clip, 1)
-    elif transition_mode.value == VideoTransitionMode.slide_in.value:
-        return video_effects.slidein_transition(clip, 1, shuffle_side)
-    elif transition_mode.value == VideoTransitionMode.slide_out.value:
-        return video_effects.slideout_transition(clip, 1, shuffle_side)
-    elif transition_mode.value == VideoTransitionMode.shuffle.value:
-        transition_funcs = [
-            lambda c: video_effects.fadein_transition(c, 1),
-            lambda c: video_effects.fadeout_transition(c, 1),
-            lambda c: video_effects.slidein_transition(c, 1, shuffle_side),
-            lambda c: video_effects.slideout_transition(c, 1, shuffle_side),
-        ]
-        shuffle_transition = random.choice(transition_funcs)
-        return shuffle_transition(clip)
-    
-    return clip
-
-def wrap_text(text, max_width, font="Arial", fontsize=60):
-    # Create ImageFont
-    font = ImageFont.truetype(font, fontsize)
-
-    def get_text_size(inner_text):
-        inner_text = inner_text.strip()
-        left, top, right, bottom = font.getbbox(inner_text)
-        return right - left, bottom - top
-
-    width, height = get_text_size(text)
-    if width <= max_width:
-        return text, height
-
-    # logger.warning(f"wrapping text, max_width: {max_width}, text_width: {width}, text: {text}")
-
-    processed = True
-
-    _wrapped_lines_ = []
-    words = text.split(" ")
-    _txt_ = ""
-    for word in words:
-        _before = _txt_
-        _txt_ += f"{word} "
-        _width, _height = get_text_size(_txt_)
-        if _width <= max_width:
-            continue
-        else:
-            if _txt_.strip() == word.strip():
-                processed = False
-                break
-            _wrapped_lines_.append(_before)
-            _txt_ = f"{word} "
-    _wrapped_lines_.append(_txt_)
-    if processed:
-        _wrapped_lines_ = [line.strip() for line in _wrapped_lines_]
-        result = "\n".join(_wrapped_lines_).strip()
-        height = len(_wrapped_lines_) * height
-        # logger.warning(f"wrapped text: {result}")
-        return result, height
-
-    _wrapped_lines_ = []
-    chars = list(text)
-    _txt_ = ""
-    for word in chars:
-        _txt_ += word
-        _width, _height = get_text_size(_txt_)
-        if _width <= max_width:
-            continue
-        else:
-            _wrapped_lines_.append(_txt_)
-            _txt_ = ""
-    _wrapped_lines_.append(_txt_)
-    result = "\n".join(_wrapped_lines_).strip()
-    height = len(_wrapped_lines_) * height
-    # logger.warning(f"wrapped text: {result}")
-    return result, height
-
-
-def generate_video(
-    video_path: str,
-    audio_path: str,
-    subtitle_path: str,
-    output_file: str,
-    params: VideoParams,
-):
-    aspect = VideoAspect(params.video_aspect)
-    video_width, video_height = aspect.to_resolution()
-
-    logger.info(f"start, video size: {video_width} x {video_height}")
-    logger.info(f"  ① video: {video_path}")
-    logger.info(f"  ② audio: {audio_path}")
-    logger.info(f"  ③ subtitle: {subtitle_path}")
-    logger.info(f"  ④ output: {output_file}")
-
-    # https://github.com/harry0703/MoneyPrinterTurbo/issues/217
-    # PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'final-1.mp4.tempTEMP_MPY_wvf_snd.mp3'
-    # write into the same directory as the output file
-    output_dir = os.path.dirname(output_file)
-
-    font_path = ""
-    if params.subtitle_enabled:
-        if not params.font_name:
-            params.font_name = "STHeitiMedium.ttc"
-        font_path = os.path.join(utils.font_dir(), params.font_name)
-        if os.name == "nt":
-            font_path = font_path.replace("\\", "/")
-
-        logger.info(f"using font: {font_path}")
-
-    def create_text_clip(subtitle_item):
-        params.font_size = int(params.font_size)
-        params.stroke_width = int(params.stroke_width)
-        phrase = subtitle_item[1]
-        max_width = video_width * 0.9
-        wrapped_txt, txt_height = wrap_text(
-            phrase, max_width=max_width, font=font_path, fontsize=params.font_size
-        )
-        _clip = TextClip(
-            text=wrapped_txt,
-            font=font_path,
-            font_size=params.font_size,
-            color=params.text_fore_color,
-            bg_color=params.text_background_color,
-            stroke_color=params.stroke_color,
-            stroke_width=params.stroke_width,
-        )
-        duration = subtitle_item[0][1] - subtitle_item[0][0]
-        _clip = _clip.with_start(subtitle_item[0][0])
-        _clip = _clip.with_end(subtitle_item[0][1])
-        _clip = _clip.with_duration(duration)
-        if params.subtitle_position == "bottom":
-            _clip = _clip.with_position(("center", video_height * 0.95 - _clip.h))
-        elif params.subtitle_position == "top":
-            _clip = _clip.with_position(("center", video_height * 0.05))
-        elif params.subtitle_position == "custom":
-            # Ensure the subtitle is fully within the screen bounds
-            margin = 10  # Additional margin, in pixels
-            max_y = video_height - _clip.h - margin
-            min_y = margin
-            custom_y = (video_height - _clip.h) * (params.custom_position / 100)
-            custom_y = max(
-                min_y, min(custom_y, max_y)
-            )  # Constrain the y value within the valid range
-            _clip = _clip.with_position(("center", custom_y))
-        else:  # center
-            _clip = _clip.with_position(("center", "center"))
-        return _clip
-
-    # 尝试检查视频是否仍然包含side data
-    try:
-        check_cmd = ["ffprobe", "-v", "error", "-show_streams", "-of", "json", video_path]
-        check_result = subprocess.run(check_cmd, capture_output=True, text=True)
-        
-        if check_result.returncode == 0:
-            data = json.loads(check_result.stdout)
-            has_side_data = False
-            
-            for stream in data.get("streams", []):
-                if "side_data_list" in stream:
-                    has_side_data = True
-                    for side_data in stream.get("side_data_list", []):
-                        if side_data.get("side_data_type") == "Ambient Viewing Environment":
-                            logger.warning(f"⚠️ 视频包含Ambient Viewing Environment元数据，将使用ffmpeg处理")
-                            return generate_video_with_ffmpeg(video_path, audio_path, subtitle_path, output_file, params)
-            
-            if has_side_data:
-                logger.warning(f"⚠️ 视频包含side data，可能会导致MoviePy处理失败")
-    except Exception as e:
-        logger.warning(f"检查side data时出错: {str(e)}")
-
-    try:
-        # 尝试使用MoviePy打开视频文件，验证是否可以被正常读取
-        video_clip = VideoFileClip(video_path)
-        audio_clip = AudioFileClip(audio_path).with_effects(
-            [afx.MultiplyVolume(params.voice_volume)]
-        )
-
-        def make_textclip(text):
-            return TextClip(
-                text=text,
-                font=font_path,
-                font_size=params.font_size,
-            )
-
-        if subtitle_path and os.path.exists(subtitle_path):
-            sub = SubtitlesClip(
-                subtitles=subtitle_path, encoding="utf-8", make_textclip=make_textclip
-            )
-            text_clips = []
-            for item in sub.subtitles:
-                clip = create_text_clip(subtitle_item=item)
-                text_clips.append(clip)
-            video_clip = CompositeVideoClip([video_clip, *text_clips])
-
-        bgm_file = get_bgm_file(bgm_type=params.bgm_type, bgm_file=params.bgm_file)
-        if bgm_file:
-            try:
-                bgm_clip = AudioFileClip(bgm_file).with_effects(
-                    [
-                        afx.MultiplyVolume(params.bgm_volume),
-                        afx.AudioFadeOut(3),
-                        afx.AudioLoop(duration=video_clip.duration),
-                    ]
-                )
-                audio_clip = CompositeAudioClip([audio_clip, bgm_clip])
-            except Exception as e:
-                logger.error(f"failed to add bgm: {str(e)}")
-
-        video_clip = video_clip.with_audio(audio_clip)
-        
-        video_clip.write_videofile(
-            output_file,
-            audio_codec="aac",
-            temp_audiofile_path=output_dir,
-            threads=params.n_threads or 2,
-            logger=None,
-            fps=30,
-        )
-        video_clip.close()
-        del video_clip
-        logger.success("completed")
-        return output_file
-        
-    except Exception as e:
-        logger.error(f"MoviePy处理视频失败: {str(e)}")
-        # 尝试使用ffmpeg方法生成视频
-        logger.warning("尝试使用ffmpeg方法生成视频")
-        return generate_video_with_ffmpeg(video_path, audio_path, subtitle_path, output_file, params)
-
-
-def generate_video_with_ffmpeg(
-    video_path: str,
-    audio_path: str,
-    subtitle_path: str,
-    output_file: str,
-    params: VideoParams,
-):
-    """使用纯ffmpeg方法生成视频，作为MoviePy失败时的后备方案"""
-    logger.info("使用纯ffmpeg方法处理视频")
-    aspect = VideoAspect(params.video_aspect)
-    video_width, video_height = aspect.to_resolution()
-    
-    # 创建临时目录
-    temp_dir = os.path.join(os.path.dirname(output_file), "temp_ffmpeg_" + str(uuid.uuid4()))
-    os.makedirs(temp_dir, exist_ok=True)
-    
-    try:
-        # 修正视频
-        temp_video = os.path.join(temp_dir, "processed_video.mp4")
-        rotate_filter = ""
-        rotation = get_video_rotation(video_path)
-        if rotation == 90:
-            rotate_filter = "transpose=1,"
-        elif rotation == 180:
-            rotate_filter = "transpose=2,transpose=2,"
-        elif rotation == 270:
-            rotate_filter = "transpose=2,"
-            
-        # 设置视频处理命令
-        video_cmd = [
-            "ffmpeg", "-y",
-            "-i", video_path,
-            "-map_metadata", "-1",  # 移除所有元数据
-            "-vf", f"{rotate_filter}scale={video_width}:{video_height},format=yuv420p",
-            "-c:v", "libx264",
-            "-preset", "medium",
-            "-profile:v", "main",
-            "-pix_fmt", "yuv420p",
-            temp_video
-        ]
-        
-        logger.info(f"执行视频处理命令: {' '.join(video_cmd)}")
-        video_process = subprocess.Popen(
-            video_cmd, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE, 
-            universal_newlines=True
-        )
-        
-        # 实时显示进度
-        for line in video_process.stderr:
-            if "time=" in line and "bitrate=" in line:
-                logger.info(f"视频处理进度: {line.strip()}")
-        
-        video_process.wait()
-        
-        if video_process.returncode != 0:
-            logger.error(f"视频处理失败，返回码: {video_process.returncode}")
-            return None
-        
-        logger.info("视频处理完成，准备合并音频")
-        
-        # 获取音频和视频的时长
-        probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", audio_path]
-        audio_duration_str = subprocess.check_output(probe_cmd, universal_newlines=True)
-        audio_duration = float(json.loads(audio_duration_str)["format"]["duration"])
-        
-        probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", temp_video]
-        video_duration_str = subprocess.check_output(probe_cmd, universal_newlines=True)
-        video_duration = float(json.loads(video_duration_str)["format"]["duration"])
-        
-        # 准备BGM
-        temp_bgm = None
-        if params.bgm_type and params.bgm_type != "none":
-            bgm_file = get_bgm_file(bgm_type=params.bgm_type, bgm_file=params.bgm_file)
-            if bgm_file:
-                try:
-                    # 调整BGM音量并循环
-                    temp_bgm = os.path.join(temp_dir, "bgm_processed.mp3")
-                    bgm_cmd = [
-                        "ffmpeg", "-y",
-                        "-i", bgm_file,
-                        "-af", f"volume={params.bgm_volume},afade=t=out:st={audio_duration-3}:d=3",
-                        "-to", str(audio_duration),
-                        temp_bgm
-                    ]
-                    subprocess.run(bgm_cmd, check=True)
-                    logger.info("BGM处理完成")
-                except Exception as e:
-                    logger.error(f"BGM处理失败: {str(e)}")
-                    temp_bgm = None
-        
-        # 准备字幕文件(如果有)
-        temp_subtitle = None
-        if subtitle_path and os.path.exists(subtitle_path) and params.subtitle_enabled:
-            try:
-                # 转换字幕为ASS格式
-                temp_subtitle = os.path.join(temp_dir, "subtitle.ass")
-                font_path = ""
-                if params.font_name:
-                    font_path = os.path.join(utils.font_dir(), params.font_name)
-                
-                # 确定字幕位置
-                line_position = 10  # 默认位置(底部)
-                if params.subtitle_position == "top":
-                    line_position = 90
-                elif params.subtitle_position == "center":
-                    line_position = 50
-                elif params.subtitle_position == "custom":
-                    line_position = params.custom_position
-                
-                subtitle_cmd = [
-                    "ffmpeg", "-y",
-                    "-i", subtitle_path,
-                    "-c:s", "ass",
-                    temp_subtitle
-                ]
-                subprocess.run(subtitle_cmd, check=True)
-                logger.info("字幕转换完成")
-            except Exception as e:
-                logger.error(f"字幕处理失败: {str(e)}")
-                temp_subtitle = None
-        
-        # 合并视频和音频(以及字幕和BGM)
-        final_cmd = [
-            "ffmpeg", "-y",
-            "-i", temp_video,
-            "-i", audio_path
-        ]
-        
-        # 添加BGM输入(如果有)
-        if temp_bgm:
-            final_cmd.extend(["-i", temp_bgm])
-        
-        # 音频映射和混合
-        if temp_bgm:
-            final_cmd.extend([
-                "-filter_complex", f"[1:a]volume={params.voice_volume}[a1];[2:a]volume={params.bgm_volume}[a2];[a1][a2]amix=inputs=2:duration=longest[a]",
-                "-map", "0:v", "-map", "[a]"
-            ])
-        else:
-            final_cmd.extend([
-                "-filter_complex", f"[1:a]volume={params.voice_volume}[a]",
-                "-map", "0:v", "-map", "[a]"
-            ])
-        
-        # 添加字幕(如果有)
-        if temp_subtitle:
-            # 需要处理字幕路径中的特殊字符
-            safe_subtitle_path = temp_subtitle.replace(":", "\\:")
-            final_cmd.extend(["-vf", f"subtitles={safe_subtitle_path}"])
-        
-        # 输出设置
-        final_cmd.extend([
-            "-c:v", "libx264",
-            "-preset", "medium",
-            "-profile:v", "main",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-pix_fmt", "yuv420p",
-            "-shortest",
-            output_file
-        ])
-        
-        logger.info(f"执行最终合并命令: {' '.join(final_cmd)}")
-        final_process = subprocess.Popen(
-            final_cmd, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE, 
-            universal_newlines=True
-        )
-        
-        # 实时显示进度
-        for line in final_process.stderr:
-            if "time=" in line and "bitrate=" in line:
-                logger.info(f"合并进度: {line.strip()}")
-        
-        final_process.wait()
-        
-        if final_process.returncode != 0:
-            logger.error(f"视频合并失败，返回码: {final_process.returncode}")
-            return None
-        
-        logger.success("视频生成完成")
-        return output_file
-        
-    except Exception as e:
-        logger.error(f"使用ffmpeg生成视频时出错: {str(e)}")
-        return None
-    finally:
-        # 清理临时文件
-        try:
-            shutil.rmtree(temp_dir)
-        except Exception as e:
-            logger.error(f"清理临时文件失败: {str(e)}")
-
-
-def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
-    for material in materials:
-        if not material.url:
-            continue
-
-        ext = utils.parse_extension(material.url)
-        
-        # 先检查文件是否真的存在
-        if not os.path.exists(material.url):
-            logger.error(f"文件不存在: {material.url}")
-            continue
-        
-        # 先尝试获取基本信息
-        if ext in const.FILE_TYPE_VIDEOS:
-            try:
-                # 获取编码和旋转信息
-                codec = get_video_codec(material.url)
-                rotation = get_video_rotation(material.url)
-                
-                # 对于HEVC编码可以添加特殊处理
-                if "hevc" in codec.lower() or "h265" in codec.lower():
-                    logger.info(f"检测到HEVC编码视频: {material.url}")
-                    processed_path = preprocess_hevc_video(material.url)
-                    if processed_path != material.url:
-                        material.url = processed_path
-                        logger.info(f"使用预处理后的视频: {material.url}")
-                
-                # 旋转处理
-                if rotation in [90, 270, 180]:
-                    logger.info(f"检测到需要旋转的视频: {material.url}, 旋转角度: {rotation}°")
-                    fixed_path = fix_video_for_moviepy(material.url, rotation=rotation)
-                    if fixed_path != material.url:
-                        material.url = fixed_path
-                        logger.info(f"使用旋转修正后的视频: {material.url}")
-            except Exception as e:
-                logger.error(f"处理视频时出错: {material.url}, 错误: {str(e)}")
-                # 继续尝试用原始方法
-        
-        # 下面是原始的处理逻辑
-        try:
-            if ext in const.FILE_TYPE_VIDEOS:
-                # 尝试读取视频，验证可读性
-                try:
-                    clip = VideoFileClip(material.url)
-                    width = clip.size[0]
-                    height = clip.size[1]
-                    clip.close()
-                    
-                    if width < 480 or height < 480:
-                        logger.warning(f"视频太小，宽: {width}, 高: {height}")
-                        continue
-                except Exception as e:
-                    logger.error(f"无法读取视频: {material.url}, 错误: {str(e)}")
-                    continue
-            elif ext in const.FILE_TYPE_IMAGES:
-                logger.info(f"处理图片: {material.url}")
-                try:
-                    # 创建一个图片剪辑并设置其持续时间为4秒
-                    clip = ImageClip(material.url).with_duration(clip_duration).with_position("center")
-                    
-                    # 应用缩放效果，使用resize方法
-                    # 使用lambda函数使缩放效果随时间动态变化
-                    # 缩放效果从原始大小开始，逐渐扩大到120%
-                    # t代表当前时间，clip.duration是剪辑的总时长
-                    # 注意：1表示100%大小，所以1.2表示120%大小
-                    zoom_clip = clip.resize(lambda t: 1 + (clip_duration * 0.03) * (t / clip.duration))
-                    
-                    # 创建一个包含缩放剪辑的复合视频剪辑
-                    final_clip = CompositeVideoClip([zoom_clip])
-                    
-                    # 输出视频到文件
-                    video_file = f"{material.url}.mp4"
-                    final_clip.write_videofile(video_file, fps=30, logger=None)
-                    final_clip.close()
-                    del final_clip
-                    material.url = video_file
-                    logger.success(f"图片处理完成: {video_file}")
-                except Exception as e:
-                    logger.error(f"处理图片失败: {material.url}, 错误: {str(e)}")
-                    continue
-            else:
-                logger.warning(f"不支持的文件类型: {material.url}")
-                continue
-            
-        except Exception as e:
-            logger.error(f"处理素材失败: {material.url}, 错误: {str(e)}")
-            continue
-            
-    return materials
-
-
-def force_reencode_video(video_path: str, output_path: str = None, rotation: int = 0) -> str:
-    """强制重新编码视频为完全兼容的格式"""
-    if output_path is None:
-        filename = os.path.basename(video_path)
-        dirname = os.path.dirname(video_path)
-        output_path = os.path.join(dirname, f"converted_{filename}")
-    
-    # 检查是否已经存在
-    if os.path.exists(output_path):
-        return output_path
-        
-    try:
-        # 构建旋转参数
-        rotate_filter = ""
-        if rotation == 90:
-            rotate_filter = "transpose=2"  # 逆时针旋转90度
-        elif rotation == 270:
-            rotate_filter = "transpose=1"  # 顺时针旋转90度
-        elif rotation == 180:
-            rotate_filter = "transpose=2,transpose=2"  # 旋转180度
-            
-        # 直接转码命令，不分离提取和重建步骤
-        transcode_cmd = ["ffmpeg", "-y", "-i", video_path]
-        
-        # 添加旋转滤镜
-        vf_filters = []
-        if rotate_filter:
-            vf_filters.append(rotate_filter)
-        
-        # 添加色彩空间和格式滤镜
-        vf_filters.append("format=yuv420p")
-        
-        if vf_filters:
-            transcode_cmd.extend(["-vf", ",".join(vf_filters)])
-            
-        # 添加其他参数
-        transcode_cmd.extend([
-            "-c:v", "libx264",
-            "-preset", "fast",  # 使用快速预设提高速度
-            "-crf", "23",       # 合理的质量
-            "-c:a", "aac",      # 音频编码
-            "-b:a", "128k",     # 音频比特率
-            "-movflags", "+faststart",  # 优化网络播放
-            output_path
-        ])
-        
-        # 执行转码
-        logger.info(f"重新编码视频: {video_path}")
-        logger.info(f"执行命令: {' '.join(transcode_cmd)}")
-        
-        subprocess.run(transcode_cmd, check=True)
-        
-        # 验证输出文件
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            # 简单验证视频可读性
-            probe_cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", 
-                        "-show_entries", "stream=codec_type", "-of", "csv=p=0", output_path]
-            result = subprocess.run(probe_cmd, capture_output=True, text=True)
-            
-            if "video" in result.stdout.strip():
-                logger.success(f"视频重编码成功: {output_path}")
-                return output_path
-            else:
-                logger.error(f"视频重编码输出不包含视频流")
-                return video_path
-        else:
-            logger.error(f"视频重编码失败或输出为空")
-            return video_path
-    except Exception as e:
-        logger.error(f"视频重编码失败: {str(e)}")
-        return video_path
-
-
-def preprocess_hevc_video(video_path: str) -> str:
     """
-    预处理HEVC编码的视频，将其转换为H.264编码
-    处理高分辨率视频及旋转信息
-    """
-    try:
-        # 获取元数据
-        metadata = VideoMetadataHandler.get_video_metadata(video_path)
-        width = metadata.get("width", 0)
-        height = metadata.get("height", 0)
-        rotation = metadata.get("rotation", 0)
-        
-        logger.info(f"🎞️ 预处理HEVC视频 | 路径: {video_path}")
-        logger.info(f"📊 视频信息: {width}x{height}, 旋转: {rotation}°")
-        
-        # 如果视频很小或没有旋转，可能不需要处理
-        if width <= 1920 and height <= 1920 and rotation == 0:
-            return video_path
-            
-        # 使用fix_video_for_moviepy函数处理
-        output_path = fix_video_for_moviepy(video_path, rotation=rotation)
-        return output_path
-        
-    except Exception as e:
-        logger.error(f"❌ 预处理HEVC视频出错: {str(e)}")
-        return video_path
-
-
-def fix_video_for_moviepy(video_path: str, output_path: str = None, rotation: int = 0) -> str:
-    """
-    彻底移除所有元数据和side data，特别是Ambient Viewing Environment
-    """
-    if output_path is None:
-        filename = os.path.basename(video_path)
-        dirname = os.path.dirname(video_path)
-        output_path = os.path.join(dirname, f"moviepy_compatible_{filename}")
+    将多个视频合并成一个视频，并添加音频，使用纯ffmpeg实现。
     
-    # 检查是否已存在
-    if os.path.exists(output_path):
-        return output_path
-    
-    try:
-        # 解决方案：完全绕过任何元数据，使用原始视频重新完全编码
-        # 使用一个中间临时文件，确保完全移除所有元数据
-        temp_raw = os.path.join(os.path.dirname(output_path), f"temp_raw_{os.path.basename(output_path)}")
+    Args:
+        combined_video_path: 合并后的视频路径
+        video_paths: 视频路径列表
+        audio_file: 音频文件路径
+        video_aspect: 视频比例
+        video_concat_mode: 视频连接模式（random随机、sequential顺序）
+        video_transition_mode: 视频转场特效
+        max_clip_duration: 最大片段时长（秒）
+        threads: 线程数
         
-        # 构建旋转滤镜（如果需要）
-        rotate_filter = ""
-        if rotation == 90:
-            rotate_filter = "transpose=2,"  # 逆时针旋转90度
-        elif rotation == 270:
-            rotate_filter = "transpose=1,"  # 顺时针旋转90度
-        elif rotation == 180:
-            rotate_filter = "transpose=2,transpose=2,"  # 旋转180度
-        
-        # 第一步：提取原始视频流，不保留任何元数据
-        extract_cmd = [
-            "ffmpeg", "-y",
-            "-i", video_path,
-            "-an",  # 不处理音频
-            "-vf", f"{rotate_filter}scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p",  # 缩放到1080x1920
-            "-c:v", "libx264",
-            "-crf", "23",  
-            "-preset", "fast",
-            "-pix_fmt", "yuv420p",
-            "-sn", "-dn",  # 不包含字幕和数据流
-            "-map_metadata", "-1",  # 移除所有元数据
-            "-fflags", "+bitexact",  # 完全按照规范处理
-            "-flags:v", "+bitexact",
-            "-flags:a", "+bitexact",
-            "-x264opts", "no-scenecut",  # 避免场景切换
-            temp_raw
-        ]
-        
-        logger.info(f"🛠️ 第一步：提取视频流: {os.path.basename(video_path)}")
-        extract_result = subprocess.run(extract_cmd, capture_output=True, text=True)
-        
-        if extract_result.returncode != 0:
-            logger.error(f"❌ 视频流提取失败: {extract_result.stderr}")
-            return video_path
-            
-        # 第二步：使用裸视频重新创建MP4文件，确保完全没有元数据
-        final_cmd = [
-            "ffmpeg", "-y",
-            "-i", temp_raw,
-            "-c:v", "copy",  # 直接复制视频流
-            "-movflags", "+faststart+frag_keyframe+empty_moov",  # 优化网络播放
-            "-fflags", "+bitexact",  # 完全按照规范处理
-            "-flags:v", "+bitexact",
-            "-map_metadata", "-1",  # 再次移除所有元数据
-            output_path
-        ]
-        
-        logger.info(f"🛠️ 第二步：重建无元数据视频文件")
-        final_result = subprocess.run(final_cmd, capture_output=True, text=True)
-        
-        # 清理临时文件
-        try:
-            if os.path.exists(temp_raw):
-                os.remove(temp_raw)
-        except:
-            pass
-            
-        if final_result.returncode != 0:
-            logger.error(f"❌ 视频重建失败: {final_result.stderr}")
-            return video_path
-        
-        # 验证输出文件
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            # 验证：检查新文件是否存在Ambient Viewing Environment
-            check_cmd = ["ffprobe", "-v", "error", "-show_streams", "-of", "json", output_path]
-            check_result = subprocess.run(check_cmd, capture_output=True, text=True)
-            
-            if check_result.returncode == 0:
-                try:
-                    data = json.loads(check_result.stdout)
-                    has_side_data = False
-                    for stream in data.get("streams", []):
-                        if "side_data_list" in stream:
-                            has_side_data = True
-                            break
-                            
-                    if not has_side_data:
-                        logger.success(f"✅ 视频修复成功：无side data")
-                        
-                        # 额外验证：尝试用MoviePy读取
-                        try:
-                            with VideoFileClip(output_path) as clip:
-                                logger.success(f"✅ MoviePy可以读取修复后的视频")
-                        except Exception as e:
-                            logger.error(f"❌ MoviePy无法读取修复后的视频: {str(e)}")
-                            return video_path
-                            
-                        return output_path
-                    else:
-                        logger.error(f"❌ 视频仍包含side data")
-                except:
-                    pass
-            
-            logger.warning("尝试第三种方法：使用ffmpeg raw格式中转")
-            temp_yuv = os.path.join(os.path.dirname(output_path), "temp_yuv.yuv")
-            
-            # 导出为原始YUV格式
-            yuv_cmd = [
-                "ffmpeg", "-y",
-                "-i", video_path,
-                "-an",  # 不处理音频
-                "-vf", f"{rotate_filter}scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
-                "-f", "rawvideo",
-                "-pix_fmt", "yuv420p",
-                temp_yuv
-            ]
-            
-            yuv_result = subprocess.run(yuv_cmd, capture_output=True, text=True)
-            
-            if yuv_result.returncode == 0 and os.path.exists(temp_yuv):
-                # 从YUV重建MP4
-                rebuild_cmd = [
-                    "ffmpeg", "-y",
-                    "-f", "rawvideo",
-                    "-pix_fmt", "yuv420p",
-                    "-s", "1080x1920",  # 必须指定尺寸
-                    "-r", "30",  # 帧率
-                    "-i", temp_yuv,
-                    "-c:v", "libx264",
-                    "-crf", "23",
-                    "-preset", "fast",
-                    output_path
-                ]
-                
-                rebuild_result = subprocess.run(rebuild_cmd, capture_output=True, text=True)
-                
-                # 清理临时YUV文件
-                try:
-                    os.remove(temp_yuv)
-                except:
-                    pass
-                    
-                if rebuild_result.returncode == 0:
-                    # 测试MoviePy是否可读
-                    try:
-                        with VideoFileClip(output_path) as clip:
-                            logger.success("✅ YUV中转方法成功，MoviePy可读取")
-                            return output_path
-                    except:
-                        pass
-            
-            # 如果所有方法都失败，直接用我们的ffmpeg函数处理视频
-            logger.warning("🔄 所有修复方法失败，直接使用ffmpeg")
-            return video_path
-        else:
-            logger.error(f"❌ 输出视频文件无效")
-            return video_path
-            
-    except Exception as e:
-        logger.error(f"❌ 视频修复过程出错: {str(e)}", exc_info=True)
-        return video_path
+    Returns:
+        合并后的视频路径
+    """
+    # 调用纯ffmpeg实现
+    logger.info("使用纯ffmpeg方法合并视频")
+    return combine_videos_ffmpeg(
+        combined_video_path=combined_video_path,
+        video_paths=video_paths,
+        audio_file=audio_file,
+        video_aspect=video_aspect,
+        video_concat_mode=video_concat_mode,
+        video_transition_mode=video_transition_mode,
+        max_clip_duration=max_clip_duration,
+        threads=threads
+    )
 
 def combine_videos_with_ffmpeg(combined_video_path: str, video_paths: List[str], audio_file: str, 
                               video_aspect: VideoAspect = VideoAspect.portrait,
@@ -1582,8 +544,8 @@ def combine_videos_with_ffmpeg(combined_video_path: str, video_paths: List[str],
             "ffmpeg", "-y",
             "-i", merged_video,
             "-i", audio_file,
-            "-map", "0:v:0",
-            "-map", "1:a:0",
+            "-map", "0:v",
+            "-map", "1:a",
             "-c:v", "copy",
             "-c:a", "aac",
             "-b:a", "192k",
@@ -1726,6 +688,606 @@ def create_fallback_video(combined_video_path: str, audio_file: str, duration: f
     except Exception as e:
         logger.error(f"创建备选视频失败: {str(e)}")
         return None
+
+
+def generate_video(
+    video_path: str,
+    audio_path: str,
+    subtitle_path: str,
+    output_file: str,
+    params: VideoParams,
+):
+    """
+    使用ffmpeg生成视频，完全不依赖MoviePy
+    
+    Args:
+        video_path: 视频文件路径
+        audio_path: 音频文件路径
+        subtitle_path: 字幕文件路径
+        output_file: 输出文件路径
+        params: 视频参数
+    
+    Returns:
+        生成的视频文件路径或None
+    """
+    # 调用纯ffmpeg实现
+    logger.info("使用纯ffmpeg方法生成视频")
+    return generate_video_ffmpeg(
+        video_path=video_path,
+        audio_path=audio_path,
+        subtitle_path=subtitle_path,
+        output_file=output_file,
+        params=params
+    )
+
+
+def preprocess_video_ffmpeg(materials: List[MaterialInfo], clip_duration=4):
+    """
+    使用ffmpeg预处理视频和图片素材，全部转换为视频
+    
+    Args:
+        materials: 素材信息列表
+        clip_duration: 图片转视频的持续时间（秒）
+    
+    Returns:
+        处理后的素材列表
+    """
+    for material in materials:
+        if not material.url:
+            continue
+
+        ext = utils.parse_extension(material.url)
+        
+        # 先检查文件是否真的存在
+        if not os.path.exists(material.url):
+            logger.error(f"文件不存在: {material.url}")
+            continue
+        
+        try:
+            if ext in const.FILE_TYPE_VIDEOS:
+                # 使用ffprobe获取视频信息
+                probe_cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", 
+                            "-show_entries", "stream=width,height,codec_name", "-of", "json", material.url]
+                result = subprocess.run(probe_cmd, capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    data = json.loads(result.stdout)
+                    if "streams" in data and data["streams"]:
+                        stream = data["streams"][0]
+                        width = stream.get("width", 0)
+                        height = stream.get("height", 0)
+                        codec = stream.get("codec_name", "")
+                        
+                        logger.info(f"视频信息: 宽={width}, 高={height}, 编码={codec}")
+                        
+                        # 尺寸太小的视频跳过
+                        if width < 480 or height < 480:
+                            logger.warning(f"视频太小，宽: {width}, 高: {height}")
+                            continue
+                        
+                        # 对HEVC编码视频或高分辨率视频进行转码
+                        if "hevc" in codec.lower() or "h265" in codec.lower() or width > 1920 or height > 1920:
+                            logger.info(f"需要转码的视频: {material.url}")
+                            output_path = os.path.join(os.path.dirname(material.url), f"processed_{os.path.basename(material.url)}")
+                            
+                            # 转码命令
+                            transcode_cmd = [
+                                "ffmpeg", "-y",
+                                "-i", material.url,
+                                "-c:v", "libx264",
+                                "-crf", "23",
+                                "-preset", "fast",
+                                "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+                                "-c:a", "aac",
+                                "-b:a", "128k",
+                                "-map_metadata", "-1",  # 移除所有元数据
+                                output_path
+                            ]
+                            
+                            subprocess.run(transcode_cmd, check=True, capture_output=True)
+                            
+                            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                                material.url = output_path
+                                logger.info(f"视频转码成功: {output_path}")
+                else:
+                    logger.error(f"无法读取视频信息: {material.url}")
+                    continue
+                    
+            elif ext in const.FILE_TYPE_IMAGES:
+                logger.info(f"处理图片: {material.url}")
+                # 使用ffmpeg将图片转换为视频，添加缩放效果
+                video_file = f"{material.url}.mp4"
+                
+                # 缩放效果：使用zoompan滤镜实现缩放效果
+                image_cmd = [
+                    "ffmpeg", "-y",
+                    "-loop", "1",  # 循环输入
+                    "-i", material.url,
+                    "-vf", f"zoompan=z='min(zoom+0.0015,1.2)':d={int(clip_duration*30)}:fps=30,format=yuv420p",
+                    "-c:v", "libx264",
+                    "-t", str(clip_duration),
+                    "-pix_fmt", "yuv420p",
+                    video_file
+                ]
+                
+                subprocess.run(image_cmd, check=True, capture_output=True)
+                
+                if os.path.exists(video_file) and os.path.getsize(video_file) > 0:
+                    material.url = video_file
+                    logger.info(f"图片转视频成功: {video_file}")
+                else:
+                    logger.error(f"图片转视频失败: {material.url}")
+            else:
+                logger.warning(f"不支持的文件类型: {material.url}")
+                continue
+                
+        except Exception as e:
+            logger.error(f"处理素材失败: {material.url}, 错误: {str(e)}")
+            continue
+            
+    return materials
+
+# 保留preprocess_video名称，使用ffmpeg实现
+def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
+    """
+    使用ffmpeg处理视频和图片素材
+    """
+    return preprocess_video_ffmpeg(materials, clip_duration)
+
+# 完全使用ffmpeg实现的combine_videos_ffmpeg函数
+def combine_videos_ffmpeg(
+    combined_video_path: str,
+    video_paths: List[str],
+    audio_file: str,
+    video_aspect: VideoAspect = VideoAspect.portrait,
+    video_concat_mode: VideoConcatMode = VideoConcatMode.random,
+    video_transition_mode: VideoTransitionMode = None,
+    max_clip_duration: int = 5,
+    threads: int = 2,
+) -> str:
+    """使用纯ffmpeg实现视频合并，完全不依赖MoviePy"""
+    if not video_paths:
+        logger.error("没有输入视频文件")
+        return None
+        
+    if not os.path.exists(audio_file):
+        logger.error(f"音频文件不存在: {audio_file}")
+        return None
+    
+    # 创建临时目录
+    temp_dir = os.path.join(os.path.dirname(combined_video_path), f"temp_combine_{str(uuid.uuid4())}")
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    # 记录需要清理的临时文件
+    processed_paths = []
+    segment_files = []
+    
+    try:
+        # 获取音频时长
+        audio_probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", audio_file]
+        audio_info = json.loads(subprocess.check_output(audio_probe_cmd, universal_newlines=True))
+        audio_duration = float(audio_info["format"]["duration"])
+        logger.info(f"音频时长: {audio_duration} 秒")
+        
+        # 设置视频分辨率
+        aspect = VideoAspect(video_aspect)
+        video_width, video_height = aspect.to_resolution()
+        logger.info(f"视频分辨率: {video_width}x{video_height}")
+        
+        # 预处理并裁剪每个视频
+        processed_segments = []
+        segment_index = 0
+        
+        for idx, video_path in enumerate(video_paths):
+            try:
+                if not os.path.exists(video_path):
+                    logger.error(f"视频文件不存在: {video_path}")
+                    continue
+                
+                logger.info(f"处理视频 {idx+1}/{len(video_paths)}: {os.path.basename(video_path)}")
+                
+                # 获取视频信息
+                video_probe_cmd = ["ffprobe", "-v", "error", "-show_entries", 
+                                  "format=duration:stream=width,height,rotation,codec_name", 
+                                  "-of", "json", video_path]
+                video_info = json.loads(subprocess.check_output(video_probe_cmd, universal_newlines=True))
+                
+                video_duration = float(video_info["format"]["duration"])
+                rotation = 0
+                codec = ""
+                
+                for stream in video_info.get("streams", []):
+                    if stream.get("codec_type") == "video":
+                        # 获取旋转信息
+                        if "tags" in stream and "rotate" in stream["tags"]:
+                            rotation = int(stream["tags"]["rotate"])
+                        elif "side_data_list" in stream:
+                            for side_data in stream.get("side_data_list", []):
+                                if side_data.get("rotation") is not None:
+                                    rotation = int(side_data["rotation"])
+                        # 获取编码信息
+                        codec = stream.get("codec_name", "")
+                        break
+                
+                logger.info(f"旋转: {rotation}°, 编码: {codec}, 时长: {video_duration}秒")
+                
+                # 确定裁剪点
+                start_time = 0
+                clip_count = 0
+                
+                while start_time < video_duration:
+                    end_time = min(start_time + max_clip_duration, video_duration)
+                    segment_duration = end_time - start_time
+                    
+                    # 如果片段太短，跳过
+                    if segment_duration < 0.5:
+                        logger.warning(f"片段太短 ({segment_duration}秒)，跳过")
+                        start_time = end_time
+                        continue
+                    
+                    # 创建输出文件名
+                    segment_file = os.path.join(temp_dir, f"segment_{segment_index:04d}.mp4")
+                    segment_index += 1
+                    segment_files.append(segment_file)
+                    
+                    # 设置旋转滤镜
+                    rotate_filter = ""
+                    if rotation == 90:
+                        rotate_filter = "transpose=1,"
+                    elif rotation == 180:
+                        rotate_filter = "transpose=2,transpose=2,"
+                    elif rotation == 270:
+                        rotate_filter = "transpose=2,"
+                    
+                    # 裁剪并处理视频
+                    process_cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", str(start_time),
+                        "-i", video_path,
+                        "-t", str(segment_duration),
+                        "-vf", f"{rotate_filter}scale={video_width}:{video_height}:force_original_aspect_ratio=decrease,pad={video_width}:{video_height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+                        "-an",  # 去除音频
+                        "-c:v", "libx264",
+                        "-preset", "medium",
+                        "-crf", "23",
+                        "-map_metadata", "-1",  # 移除所有元数据
+                        segment_file
+                    ]
+                    
+                    logger.info(f"处理片段: {start_time}s - {end_time}s -> {os.path.basename(segment_file)}")
+                    subprocess.run(process_cmd, check=True, capture_output=True)
+                    
+                    # 检查输出文件
+                    if os.path.exists(segment_file) and os.path.getsize(segment_file) > 0:
+                        processed_segments.append({
+                            "file": segment_file,
+                            "duration": segment_duration
+                        })
+                        clip_count += 1
+                    else:
+                        logger.error(f"生成片段失败: {segment_file}")
+                        if os.path.exists(segment_file):
+                            os.remove(segment_file)
+                    
+                    # 如果是顺序模式，只取一个片段
+                    if video_concat_mode.value == VideoConcatMode.sequential.value:
+                        break
+                    
+                    start_time = end_time
+                
+                logger.info(f"从视频中提取了 {clip_count} 个片段")
+                
+            except Exception as e:
+                logger.error(f"处理视频失败: {os.path.basename(video_path)}, 错误: {str(e)}")
+                continue
+        
+        # 如果没有有效片段，返回None
+        if not processed_segments:
+            logger.error("没有有效的视频片段，合成失败")
+            return None
+        
+        # 根据需要打乱片段顺序
+        if video_concat_mode.value == VideoConcatMode.random.value:
+            random.shuffle(processed_segments)
+        
+        # 计算所有片段的总时长
+        total_segment_duration = sum(segment["duration"] for segment in processed_segments)
+        
+        # 如果总时长不足音频时长，则循环使用片段
+        if total_segment_duration < audio_duration:
+            original_segments = processed_segments.copy()
+            while total_segment_duration < audio_duration:
+                # 复制一份片段列表并打乱（如果是随机模式）
+                additional_segments = original_segments.copy()
+                if video_concat_mode.value == VideoConcatMode.random.value:
+                    random.shuffle(additional_segments)
+                
+                # 添加片段，直到时长足够
+                for segment in additional_segments:
+                    processed_segments.append(segment)
+                    total_segment_duration += segment["duration"]
+                    if total_segment_duration >= audio_duration:
+                        break
+        
+        # 创建concat文件
+        concat_file = os.path.join(temp_dir, "concat_list.txt")
+        with open(concat_file, "w") as f:
+            for segment in processed_segments:
+                f.write(f"file '{segment['file']}'\n")
+        
+        # 合并视频片段
+        merged_video = os.path.join(temp_dir, "merged_video.mp4")
+        concat_cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", concat_file,
+            "-c", "copy",
+            merged_video
+        ]
+        
+        logger.info("合并视频片段...")
+        subprocess.run(concat_cmd, check=True, capture_output=True)
+        
+        if not os.path.exists(merged_video) or os.path.getsize(merged_video) == 0:
+            logger.error("合并视频片段失败")
+            return None
+        
+        # 将音频添加到视频
+        final_cmd = [
+            "ffmpeg", "-y",
+            "-i", merged_video,
+            "-i", audio_file,
+            "-map", "0:v",
+            "-map", "1:a",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-shortest",  # 使用最短的输入时长
+            combined_video_path
+        ]
+        
+        logger.info("添加音频到视频...")
+        subprocess.run(final_cmd, check=True, capture_output=True)
+        
+        # 检查最终输出
+        if os.path.exists(combined_video_path) and os.path.getsize(combined_video_path) > 0:
+            logger.success(f"视频合成成功: {os.path.basename(combined_video_path)}")
+            return combined_video_path
+        else:
+            logger.error("视频合成失败")
+            return None
+            
+    except Exception as e:
+        logger.error(f"视频合成过程中出错: {str(e)}")
+        return None
+    finally:
+        # 清理临时文件
+        try:
+            shutil.rmtree(temp_dir)
+        except Exception as e:
+            logger.error(f"清理临时文件失败: {str(e)}")
+
+
+def generate_video_ffmpeg(
+    video_path: str,
+    audio_path: str,
+    subtitle_path: str,
+    output_file: str,
+    params: VideoParams,
+):
+    """使用纯ffmpeg实现视频生成，完全不依赖MoviePy"""
+    logger.info(f"使用ffmpeg生成视频")
+    aspect = VideoAspect(params.video_aspect)
+    video_width, video_height = aspect.to_resolution()
+
+    logger.info(f"视频尺寸: {video_width} x {video_height}")
+    logger.info(f"视频: {video_path}")
+    logger.info(f"音频: {audio_path}")
+    logger.info(f"字幕: {subtitle_path}")
+    logger.info(f"输出: {output_file}")
+
+    # 创建临时目录
+    temp_dir = os.path.join(os.path.dirname(output_file), f"temp_ffmpeg_{str(uuid.uuid4())}")
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    try:
+        # 处理视频旋转和分辨率
+        processed_video = os.path.join(temp_dir, "processed_video.mp4")
+        rotation = get_video_rotation(video_path)
+        rotate_filter = ""
+        if rotation == 90:
+            rotate_filter = "transpose=1,"
+        elif rotation == 180:
+            rotate_filter = "transpose=2,transpose=2,"
+        elif rotation == 270:
+            rotate_filter = "transpose=2,"
+            
+        video_cmd = [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-vf", f"{rotate_filter}scale={video_width}:{video_height}:force_original_aspect_ratio=decrease,pad={video_width}:{video_height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "23",
+            "-an",  # 不包含音频
+            "-map_metadata", "-1",  # 移除所有元数据
+            processed_video
+        ]
+        
+        logger.info("处理视频...")
+        video_process = subprocess.Popen(
+            video_cmd, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE, 
+            universal_newlines=True
+        )
+        
+        # 显示处理进度
+        for line in video_process.stderr:
+            if "time=" in line and "bitrate=" in line:
+                logger.info(f"视频处理进度: {line.strip()}")
+        
+        video_process.wait()
+        
+        if video_process.returncode != 0 or not os.path.exists(processed_video):
+            logger.error("视频处理失败")
+            return None
+            
+        # 获取音频信息
+        audio_probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", audio_path]
+        audio_info = json.loads(subprocess.check_output(audio_probe_cmd, universal_newlines=True))
+        audio_duration = float(audio_info["format"]["duration"])
+        
+        # 处理背景音乐
+        bgm_file = get_bgm_file(bgm_type=params.bgm_type, bgm_file=params.bgm_file)
+        processed_bgm = None
+        
+        if bgm_file and os.path.exists(bgm_file):
+            processed_bgm = os.path.join(temp_dir, "processed_bgm.mp3")
+            bgm_cmd = [
+                "ffmpeg", "-y",
+                "-i", bgm_file,
+                "-af", f"volume={params.bgm_volume},afade=t=out:st={audio_duration-3}:d=3",
+                "-to", str(audio_duration),
+                processed_bgm
+            ]
+            
+            logger.info("处理背景音乐...")
+            subprocess.run(bgm_cmd, check=True, capture_output=True)
+            
+            if not os.path.exists(processed_bgm):
+                logger.error("背景音乐处理失败")
+                processed_bgm = None
+        
+        # 处理字幕
+        subtitle_filter = ""
+        if subtitle_path and os.path.exists(subtitle_path) and params.subtitle_enabled:
+            # 准备字体
+            font_path = ""
+            if not params.font_name:
+                params.font_name = "STHeitiMedium.ttc"
+            font_path = os.path.join(utils.font_dir(), params.font_name)
+            if os.name == "nt":
+                font_path = font_path.replace("\\", "/")
+                
+            # 确定字幕位置
+            position = "bottom"  # 默认底部
+            if params.subtitle_position == "top":
+                position = "top"
+            elif params.subtitle_position == "center":
+                position = "center"
+                
+            # 创建ASS字幕
+            ass_subtitle = os.path.join(temp_dir, "subtitle.ass")
+            subtitle_cmd = [
+                "ffmpeg", "-y",
+                "-i", subtitle_path,
+                "-f", "ass",
+                ass_subtitle
+            ]
+            
+            logger.info("转换字幕格式...")
+            subprocess.run(subtitle_cmd, check=True, capture_output=True)
+            
+            if os.path.exists(ass_subtitle):
+                # 安全处理路径中的特殊字符
+                safe_subtitle_path = ass_subtitle.replace(":", "\\:")
+                subtitle_filter = f"subtitles={safe_subtitle_path}:force_style='FontName={params.font_name},FontSize={params.font_size},PrimaryColour=&H{params.text_fore_color[1:]}&,OutlineColour=&H{params.stroke_color[1:]}&,BorderStyle=1,Outline={params.stroke_width},Alignment=2'"
+        
+        # 音频处理
+        merged_audio = os.path.join(temp_dir, "merged_audio.aac")
+        
+        if processed_bgm:
+            # 合并主音频和背景音乐
+            audio_cmd = [
+                "ffmpeg", "-y",
+                "-i", audio_path,
+                "-i", processed_bgm,
+                "-filter_complex", f"[0:a]volume={params.voice_volume}[a1];[1:a]volume={params.bgm_volume}[a2];[a1][a2]amix=inputs=2:duration=longest[aout]",
+                "-map", "[aout]",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                merged_audio
+            ]
+        else:
+            # 只处理主音频
+            audio_cmd = [
+                "ffmpeg", "-y",
+                "-i", audio_path,
+                "-af", f"volume={params.voice_volume}",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                merged_audio
+            ]
+        
+        logger.info("处理音频...")
+        subprocess.run(audio_cmd, check=True, capture_output=True)
+        
+        if not os.path.exists(merged_audio):
+            logger.error("音频处理失败")
+            return None
+        
+        # 最终合并视频、音频和字幕
+        final_cmd = [
+            "ffmpeg", "-y",
+            "-i", processed_video,
+            "-i", merged_audio
+        ]
+        
+        # 添加滤镜
+        filter_complex = []
+        
+        if subtitle_filter:
+            filter_complex.append(subtitle_filter)
+            
+        # 应用滤镜（如果有）
+        if filter_complex:
+            final_cmd.extend(["-vf", ",".join(filter_complex)])
+        
+        # 输出参数
+        final_cmd.extend([
+            "-map", "0:v",
+            "-map", "1:a",
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "23",
+            "-c:a", "copy",
+            "-shortest",
+            output_file
+        ])
+        
+        logger.info("生成最终视频...")
+        final_process = subprocess.Popen(
+            final_cmd, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE, 
+            universal_newlines=True
+        )
+        
+        # 显示处理进度
+        for line in final_process.stderr:
+            if "time=" in line and "bitrate=" in line:
+                logger.info(f"最终合成进度: {line.strip()}")
+        
+        final_process.wait()
+        
+        if final_process.returncode != 0 or not os.path.exists(output_file):
+            logger.error("最终视频生成失败")
+            return None
+            
+        logger.success(f"视频生成成功: {os.path.basename(output_file)}")
+        return output_file
+        
+    except Exception as e:
+        logger.error(f"视频生成过程中出错: {str(e)}")
+        return None
+    finally:
+        # 清理临时文件
+        try:
+            shutil.rmtree(temp_dir)
+        except Exception as e:
+            logger.error(f"清理临时文件失败: {str(e)}")
 
 
 if __name__ == "__main__":
