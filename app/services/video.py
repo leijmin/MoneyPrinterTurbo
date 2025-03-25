@@ -62,20 +62,15 @@ def get_video_rotation(video_path: str) -> int:
         logger.debug(f"🔍 执行命令: {' '.join(cmd)}")
         
         # 使用二进制模式，避免编码问题
-        result = subprocess.run(cmd, capture_output=True, text=False)
+        result = subprocess.run(cmd, capture_output=True, text=False, encoding='utf-8', errors='replace')
         
         if result.returncode != 0:
-            error_message = result.stderr.decode('utf-8', errors='replace')
+            error_message = result.stderr
             logger.error(f"❌ ffprobe执行失败: {error_message}")
             return 0
         
         # 解码输出
-        stdout_bytes = result.stdout
-        try:
-            stdout_text = stdout_bytes.decode('utf-8', errors='replace')
-        except Exception as decode_error:
-            logger.error(f"❌ 解码ffprobe输出失败: {str(decode_error)}")
-            return 0
+        stdout_text = result.stdout
         
         # 确保输出不为空
         if not stdout_text:
@@ -158,15 +153,15 @@ def get_video_codec(video_path: str) -> str:
             video_path
         ]
         
-        result = subprocess.run(cmd, capture_output=True, text=False)
+        result = subprocess.run(cmd, capture_output=True, text=False, encoding='utf-8', errors='replace')
         
         if result.returncode != 0:
-            error_message = result.stderr.decode('utf-8', errors='replace')
+            error_message = result.stderr
             logger.error(f"❌ 获取编码信息失败: {error_message}")
             return "unknown"
         
         try:
-            data = json.loads(result.stdout.decode('utf-8', errors='replace'))
+            data = json.loads(result.stdout)
             streams = data.get("streams", [])
             
             if streams:
@@ -261,7 +256,7 @@ def combine_videos_with_ffmpeg(combined_video_path: str, video_paths: List[str],
             "-of", "csv=p=0", 
             audio_file
         ]
-        audio_result = subprocess.run(audio_cmd, capture_output=True, text=True)
+        audio_result = subprocess.run(audio_cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
         
         try:
             audio_duration = float(audio_result.stdout.strip())
@@ -931,7 +926,9 @@ def fix_video_for_moviepy(video_path: str, force_h264: bool = True) -> str:
                 cmd, 
                 stdout=subprocess.PIPE, 
                 stderr=subprocess.PIPE, 
-                universal_newlines=True
+                universal_newlines=True,
+                encoding='utf-8',
+                errors='replace'
             )
             
             # 收集错误输出
@@ -1110,7 +1107,9 @@ def generate_video_ffmpeg(
                 video_cmd, 
                 stdout=subprocess.PIPE, 
                 stderr=subprocess.PIPE, 
-                universal_newlines=True
+                universal_newlines=True,
+                encoding='utf-8',
+                errors='replace'
             )
             
             # 收集完整错误输出
@@ -1200,26 +1199,25 @@ def generate_video_ffmpeg(
             ]
             
             logger.info("转换字幕格式...")
-            subprocess.run(subtitle_cmd, check=True, capture_output=True)
+            subprocess.run(subtitle_cmd, check=True, capture_output=True, encoding='utf-8', errors='replace')
             
             if os.path.exists(ass_subtitle):
                 # 安全处理路径中的特殊字符
                 safe_subtitle_path = ass_subtitle
                 if os.name == "nt":
-                    # 对于Windows路径，先转换为正斜杠，然后转义冒号
-                    safe_subtitle_path = safe_subtitle_path.replace("\\", "/").replace(":", "\\:")
-                    # 确保路径以正斜杠开头
-                    if not safe_subtitle_path.startswith("/"):
-                        safe_subtitle_path = "/" + safe_subtitle_path
-                else:
-                    # 对于非Windows路径，确保转义任何可能的特殊字符
-                    safe_subtitle_path = safe_subtitle_path.replace(":", "\\:")
+                    # 对于Windows路径，处理为适合ffmpeg的格式
+                    safe_subtitle_path = safe_subtitle_path.replace("\\", "/")
+                    # 确保冒号被正确转义
+                    if ":" in safe_subtitle_path:
+                        drive, path = os.path.splitdrive(safe_subtitle_path)
+                        if drive:
+                            safe_subtitle_path = drive.replace(":", "\\:") + path
                 
                 # 确保字体名称安全
                 safe_font_name = params.font_name.replace(",", "\\,").replace(":", "\\:")
                 
-                # 添加字幕滤镜，简化参数设置
-                subtitle_filter = f"subtitles={safe_subtitle_path}:force_style='FontName={safe_font_name},FontSize={params.font_size},PrimaryColour=&H{params.text_fore_color[1:]}&,OutlineColour=&H{params.stroke_color[1:]}&,BorderStyle=1,Outline={params.stroke_width},Alignment={alignment}'"
+                # 添加字幕滤镜，简化参数防止错误
+                subtitle_filter = f"subtitles='{safe_subtitle_path}':force_style='FontName={safe_font_name},FontSize={params.font_size},PrimaryColour=&H{params.text_fore_color[1:]}&,OutlineColour=&H{params.stroke_color[1:]}&,BorderStyle=1,Outline={params.stroke_width},Alignment={alignment}'"
                 
                 # 获取视频尺寸
                 probe_cmd = [
@@ -1263,7 +1261,7 @@ def generate_video_ffmpeg(
             ]
         
         logger.info("处理音频...")
-        subprocess.run(audio_cmd, check=True, capture_output=True)
+        subprocess.run(audio_cmd, check=True, capture_output=True, encoding='utf-8', errors='replace')
         
         if not os.path.exists(merged_audio):
             logger.error("音频处理失败")
@@ -1276,10 +1274,23 @@ def generate_video_ffmpeg(
             "-i", merged_audio
         ]
         
+        # 生成最终视频... 命令构建
+        logger.info("生成最终视频...")
+        
         # 添加滤镜
         filter_complex = []
         
         if subtitle_filter:
+            # 确保字幕滤镜格式正确，用单引号包围路径
+            if "subtitles=" in subtitle_filter and not "subtitles='" in subtitle_filter:
+                parts = subtitle_filter.split(':', 1)
+                if len(parts) == 2:
+                    path_part = parts[0]
+                    rest_part = parts[1]
+                    # 给路径加上单引号
+                    path_part = path_part.replace("subtitles=", "subtitles='") + "'"
+                    subtitle_filter = f"{path_part}:{rest_part}"
+                    
             filter_complex.append(subtitle_filter)
             
         # 应用滤镜（如果有）
@@ -1321,7 +1332,9 @@ def generate_video_ffmpeg(
             final_cmd, 
             stdout=subprocess.PIPE, 
             stderr=subprocess.PIPE, 
-            universal_newlines=True
+            universal_newlines=True,
+            encoding='utf-8',
+            errors='replace'
         )
         
         # 收集完整错误输出
