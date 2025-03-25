@@ -9,6 +9,7 @@ import subprocess
 import shutil
 import uuid
 import math
+import shlex  # 添加shlex模块导入
 
 from loguru import logger
 from PIL import ImageFont
@@ -49,7 +50,31 @@ def get_video_rotation(video_path: str) -> int:
             logger.error(f"❌ 文件不存在: {video_path}")
             return 0
         
-        # 获取完整的视频信息
+        # 检查文件扩展名，对MOV文件特殊处理
+        _, ext = os.path.splitext(video_path)
+        is_mov = ext.lower() == '.mov'
+        if is_mov:
+            logger.info("检测到MOV文件，尝试特殊处理方式获取旋转信息")
+            
+            # MOV文件使用mediainfo可能更准确
+            try:
+                mediainfo_cmd = ["mediainfo", "--Output=JSON", video_path]
+                mediainfo_result = subprocess.run(mediainfo_cmd, capture_output=True, encoding='utf-8', errors='replace')
+                if mediainfo_result.returncode == 0:
+                    mediainfo_data = json.loads(mediainfo_result.stdout)
+                    for track in mediainfo_data.get("media", {}).get("track", []):
+                        if track.get("@type") == "Video" and "Rotation" in track:
+                            try:
+                                rotation = int(float(track["Rotation"]))
+                                logger.info(f"🔄 从mediainfo找到MOV文件旋转值: {rotation}°")
+                                return VideoMetadataHandler.normalize_rotation(rotation)
+                            except (ValueError, KeyError):
+                                pass
+            except (FileNotFoundError, json.JSONDecodeError, subprocess.SubprocessError):
+                # mediainfo可能不存在，继续尝试其他方法
+                pass
+        
+        # 获取完整的视频信息 - 首先使用常规方法
         cmd = [
             "ffprobe",
             "-v", "error",
@@ -62,7 +87,7 @@ def get_video_rotation(video_path: str) -> int:
         logger.debug(f"🔍 执行命令: {' '.join(cmd)}")
         
         # 使用二进制模式，避免编码问题
-        result = subprocess.run(cmd, capture_output=True, text=False, encoding='utf-8', errors='replace')
+        result = subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace')
         
         if result.returncode != 0:
             error_message = result.stderr
@@ -116,7 +141,56 @@ def get_video_rotation(video_path: str) -> int:
                     logger.info(f"🔄 从Display Matrix获取到旋转值: {rotation}°")
                     return VideoMetadataHandler.normalize_rotation(rotation)
         
-        # 3. 如果前两种方法都没找到，尝试直接搜索文本中的旋转信息
+        # 3. 如果还没找到，直接在JSON文本中查找Rotation字段
+        if "Rotation" in stdout_text or "rotation" in stdout_text.lower():
+            # 尝试使用正则表达式匹配旋转信息
+            rotation_matches = re.findall(r'[Rr]otation\D*(\d+)', stdout_text)
+            if rotation_matches:
+                try:
+                    rotation = int(rotation_matches[0])
+                    logger.info(f"🔄 从文本匹配找到旋转值: {rotation}°")
+                    return VideoMetadataHandler.normalize_rotation(rotation)
+                except ValueError:
+                    pass
+
+        # 4. 尝试使用另一种格式获取旋转信息
+        alt_cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream_tags=rotate",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            video_path
+        ]
+        
+        alt_result = subprocess.run(alt_cmd, capture_output=True, encoding='utf-8', errors='replace')
+        if alt_result.returncode == 0 and alt_result.stdout.strip():
+            try:
+                rotation = int(float(alt_result.stdout.strip()))
+                logger.info(f"🔄 从stream_tags找到旋转值: {rotation}°")
+                return VideoMetadataHandler.normalize_rotation(rotation)
+            except ValueError:
+                pass
+        
+        # 5. 尝试mediainfo命令获取旋转信息(如果系统中安装了)
+        try:
+            mediainfo_cmd = ["mediainfo", "--Output=JSON", video_path]
+            mediainfo_result = subprocess.run(mediainfo_cmd, capture_output=True, encoding='utf-8', errors='replace')
+            if mediainfo_result.returncode == 0:
+                mediainfo_data = json.loads(mediainfo_result.stdout)
+                for track in mediainfo_data.get("media", {}).get("track", []):
+                    if track.get("@type") == "Video" and "Rotation" in track:
+                        try:
+                            rotation = int(float(track["Rotation"]))
+                            logger.info(f"🔄 从mediainfo找到旋转值: {rotation}°")
+                            return VideoMetadataHandler.normalize_rotation(rotation)
+                        except (ValueError, KeyError):
+                            pass
+        except (FileNotFoundError, json.JSONDecodeError, subprocess.SubprocessError):
+            # mediainfo可能不存在或格式不正确，忽略这些错误
+            pass
+        
+        # 6. 如果前面方法都没找到，尝试直接搜索文本中的旋转信息
         if "rotation of -90" in stdout_text:
             logger.info("🔄 从文本中找到 'rotation of -90'")
             return 90
@@ -126,6 +200,31 @@ def get_video_rotation(video_path: str) -> int:
         elif "rotation of 180" in stdout_text or "rotation of -180" in stdout_text:
             logger.info("🔄 从文本中找到 'rotation of 180'")
             return 180
+        
+        # 7. 使用元数据工具生成更详细的输出并搜索其中的旋转信息
+        try:
+            meta_cmd = ["ffmpeg", "-i", video_path, "-hide_banner"]
+            meta_result = subprocess.run(meta_cmd, capture_output=True, encoding='utf-8', errors='replace')
+            meta_text = meta_result.stderr  # ffmpeg将信息输出到stderr
+            
+            # 搜索旋转信息
+            rotation_patterns = [
+                r'rotate\s*:\s*(\d+)',
+                r'rotation\s*:\s*(\d+)',
+                r'Rotation\s*:\s*(\d+)'
+            ]
+            
+            for pattern in rotation_patterns:
+                matches = re.search(pattern, meta_text, re.IGNORECASE)
+                if matches:
+                    try:
+                        rotation = int(matches.group(1))
+                        logger.info(f"🔄 从ffmpeg元数据找到旋转值: {rotation}°")
+                        return VideoMetadataHandler.normalize_rotation(rotation)
+                    except ValueError:
+                        pass
+        except subprocess.SubprocessError:
+            pass
         
         logger.info(f"🔄 未找到旋转信息，默认为0°")
         return 0
@@ -369,7 +468,10 @@ def combine_videos_with_ffmpeg(combined_video_path: str, video_paths: List[str],
                 
                 # 检测旋转角度
                 rotation = get_video_rotation(video_path)
-                logger.info(f"视频编码: {codec_name}, 旋转: {rotation}°")
+                if rotation != 0:
+                    logger.info(f"⚠️ 检测到视频旋转: {rotation}°, 将在处理过程中应用旋转矫正")
+                else:
+                    logger.info(f"视频旋转角度: {rotation}°")
                 
                 # 确定实际的视频方向
                 actual_width = v_width
@@ -397,11 +499,14 @@ def combine_videos_with_ffmpeg(combined_video_path: str, video_paths: List[str],
                 # 构建旋转滤镜（如果需要）
                 rotate_filter = ""
                 if rotation == 90:
-                    rotate_filter = "transpose=2,"  # 逆时针旋转90度
-                elif rotation == 270 or rotation == -90:
                     rotate_filter = "transpose=1,"  # 顺时针旋转90度
+                    logger.info("应用90度顺时针旋转滤镜")
+                elif rotation == 270 or rotation == -90:
+                    rotate_filter = "transpose=2,"  # 逆时针旋转90度（等于顺时针旋转270度）
+                    logger.info("应用270度顺时针旋转滤镜（逆时针90度）")
                 elif rotation == 180:
                     rotate_filter = "transpose=2,transpose=2,"  # 旋转180度
+                    logger.info("应用180度旋转滤镜")
                 
                 # 处理HEVC编码的视频
                 if codec_name.lower() == 'hevc':
@@ -1021,6 +1126,10 @@ def generate_video_ffmpeg(
         # 处理视频旋转和分辨率
         processed_video = os.path.join(temp_dir, "processed_video.mp4")
         rotation = get_video_rotation(video_path)
+        if rotation != 0:
+            logger.info(f"⚠️ 检测到视频需要旋转 {rotation}° 度")
+        else:
+            logger.info(f"视频旋转检测值: {rotation}°")
         
         # 检查是否需要旋转
         is_portrait_orientation = original_height > original_width
@@ -1202,37 +1311,71 @@ def generate_video_ffmpeg(
             subprocess.run(subtitle_cmd, check=True, capture_output=True, encoding='utf-8', errors='replace')
             
             if os.path.exists(ass_subtitle):
-                # 安全处理路径中的特殊字符
-                safe_subtitle_path = ass_subtitle
-                if os.name == "nt":
-                    # 对于Windows路径，处理为适合ffmpeg的格式
-                    safe_subtitle_path = safe_subtitle_path.replace("\\", "/")
-                    # 确保冒号被正确转义
-                    if ":" in safe_subtitle_path:
-                        drive, path = os.path.splitdrive(safe_subtitle_path)
-                        if drive:
-                            safe_subtitle_path = drive.replace(":", "\\:") + path
-                
-                # 确保字体名称安全
-                safe_font_name = params.font_name.replace(",", "\\,").replace(":", "\\:")
-                
-                # 添加字幕滤镜，简化参数防止错误
-                subtitle_filter = f"subtitles='{safe_subtitle_path}':force_style='FontName={safe_font_name},FontSize={params.font_size},PrimaryColour=&H{params.text_fore_color[1:]}&,OutlineColour=&H{params.stroke_color[1:]}&,BorderStyle=1,Outline={params.stroke_width},Alignment={alignment}'"
-                
-                # 获取视频尺寸
-                probe_cmd = [
-                    "ffprobe",
-                    "-v", "error",
-                    "-select_streams", "v:0",
-                    "-show_entries", "stream=width,height",
-                    "-of", "csv=s=x:p=0",
-                    processed_video
-                ]
                 try:
-                    dimensions = subprocess.check_output(probe_cmd, universal_newlines=True).strip()
-                    width, height = map(int, dimensions.split("x"))
+                    # 统一使用绝对路径+正斜杠
+                    safe_subtitle_path = os.path.abspath(ass_subtitle).replace('\\', '/')
+                    logger.debug(f"原始字幕路径: {ass_subtitle}")
+                    logger.debug(f"处理后路径 (1): {safe_subtitle_path}")
+                    
+                    # Windows特殊处理
+                    if os.name == "nt":
+                        if ':' in safe_subtitle_path:
+                            drive_part, path_part = safe_subtitle_path.split(':', 1)
+                            # 使用原始字符串r来处理反斜杠，避免f-string语法错误
+                            safe_subtitle_path = drive_part + r'\:' + path_part
+                            logger.debug(f"Windows路径处理 (2): {safe_subtitle_path}")
+                        
+                        # 包裹在单引号中 - 确保FFmpeg正确解析路径
+                        if not safe_subtitle_path.startswith("'") and not safe_subtitle_path.endswith("'"):
+                            safe_subtitle_path = f"'{safe_subtitle_path}'"
+                            logger.debug(f"添加引号 (3): {safe_subtitle_path}")
+                    # 其他系统直接引用
+                    else:
+                        safe_subtitle_path = shlex.quote(safe_subtitle_path)
+                        logger.debug(f"非Windows路径处理: {safe_subtitle_path}")
+                    
+                    # 确保字体名称安全
+                    safe_font_name = params.font_name.replace(",", "\\,").replace(":", "\\:")
+                    
+                    # 构建字幕滤镜
+                    subtitle_filter = f"subtitles={safe_subtitle_path}:force_style='FontName={safe_font_name},FontSize={params.font_size},PrimaryColour=&H{params.text_fore_color[1:]}&,OutlineColour=&H{params.stroke_color[1:]}&,BorderStyle=1,Outline={params.stroke_width},Alignment={alignment}'"
+                    logger.info(f"字幕滤镜设置: {subtitle_filter}")
                 except Exception as e:
-                    logger.warning(f"无法获取视频尺寸，使用默认字幕设置: {str(e)}")
+                    logger.error(f"字幕路径处理失败: {str(e)}")
+                    # 备选方案 - 简化处理，防止出错
+                    try:
+                        raw_path = ass_subtitle.replace('\\', '/')
+                        if os.name == "nt" and ":" in raw_path:
+                            # 最简单的处理方式
+                            drive, rest = raw_path.split(":", 1)
+                            raw_path = f"{drive}\\:{rest}"
+                        subtitle_filter = f"subtitles='{raw_path}':force_style='FontName={params.font_name},FontSize={params.font_size},Alignment={alignment}'"
+                        logger.info(f"使用备选字幕滤镜: {subtitle_filter}")
+                    except Exception as e2:
+                        logger.error(f"备选字幕处理也失败: {str(e2)}")
+                        subtitle_filter = ""  # 失败时不添加字幕
+                
+                # 获取视频尺寸(用于日志记录和调试，不影响字幕处理)
+                try:
+                    # 使用JSON格式获取视频尺寸
+                    json_cmd = [
+                        "ffprobe",
+                        "-v", "error",
+                        "-select_streams", "v:0",
+                        "-show_entries", "stream=width,height",
+                        "-of", "json",
+                        processed_video
+                    ]
+                    json_result = subprocess.run(json_cmd, capture_output=True, encoding='utf-8', errors='replace', check=False).stdout
+                    video_info = json.loads(json_result)
+                    if "streams" in video_info and video_info["streams"]:
+                        width = int(video_info["streams"][0].get("width", 1080))
+                        height = int(video_info["streams"][0].get("height", 1920))
+                        logger.info(f"视频尺寸: {width}x{height}")
+                    else:
+                        logger.warning("未找到视频流信息")
+                except Exception as e:
+                    logger.warning(f"获取视频尺寸失败: {str(e)}")
         
         # 音频处理
         merged_audio = os.path.join(temp_dir, "merged_audio.m4a")  # 修改扩展名为m4a而不是aac
@@ -1413,16 +1556,9 @@ def preprocess_video_ffmpeg(materials: List[MaterialInfo], clip_duration=4):
                         width = stream.get("width", 0)
                         height = stream.get("height", 0)
                         codec = stream.get("codec_name", "").lower()
-                        rotation = 0
                         
-                        # 获取旋转信息
-                        tags = stream.get("tags", {})
-                        if tags and "rotate" in tags:
-                            try:
-                                rotation = int(float(tags.get("rotate", "0")))
-                            except (ValueError, TypeError):
-                                pass
-                        
+                        # 使用增强的旋转检测函数而不是直接从tags获取
+                        rotation = get_video_rotation(material.url)
                         logger.info(f"视频信息: 宽={width}, 高={height}, 编码={codec}, 旋转={rotation}°")
                         
                         # 判断视频是否需要处理
@@ -1473,11 +1609,14 @@ def preprocess_video_ffmpeg(materials: List[MaterialInfo], clip_duration=4):
                             # 设置旋转滤镜
                             rotate_filter = ""
                             if rotation == 90:
-                                rotate_filter = "transpose=1,"
+                                rotate_filter = "transpose=1,"  # 顺时针旋转90度
+                                logger.info("应用90度顺时针旋转滤镜")
                             elif rotation == 180:
-                                rotate_filter = "transpose=2,transpose=2,"
-                            elif rotation == 270:
-                                rotate_filter = "transpose=2,"
+                                rotate_filter = "transpose=2,transpose=2,"  # 旋转180度
+                                logger.info("应用180度旋转滤镜")
+                            elif rotation == 270 or rotation == -90:
+                                rotate_filter = "transpose=2,"  # 逆时针旋转90度（等于顺时针旋转270度）
+                                logger.info("应用270度顺时针旋转滤镜")
                             
                             # 特殊情况处理：竖屏拍摄但分辨率是横屏
                             if not is_portrait and rotation == 0 and 1.7 < (width / height) < 1.8:
@@ -1963,61 +2102,75 @@ def combine_videos_ffmpeg(
             logger.error(f"清理临时文件失败: {str(e)}")
 
 
+def test_rotation_detection(video_path: str):
+    """测试旋转检测函数的各种方法"""
+    try:
+        logger.info(f"测试视频旋转检测: {video_path}")
+        
+        # 使用常规方法
+        rotation = get_video_rotation(video_path)
+        logger.info(f"检测到的旋转角度: {rotation}°")
+        
+        # 使用mediainfo（如果可用）
+        try:
+            mediainfo_cmd = ["mediainfo", "--Output=JSON", video_path]
+            mediainfo_result = subprocess.run(mediainfo_cmd, capture_output=True, encoding='utf-8', errors='replace')
+            if mediainfo_result.returncode == 0:
+                logger.info("Mediainfo 可用")
+                mediainfo_data = json.loads(mediainfo_result.stdout)
+                for track in mediainfo_data.get("media", {}).get("track", []):
+                    if track.get("@type") == "Video" and "Rotation" in track:
+                        rotation = int(float(track["Rotation"]))
+                        logger.info(f"Mediainfo 旋转值: {rotation}°")
+            else:
+                logger.info("Mediainfo 不可用")
+        except Exception as e:
+            logger.info(f"Mediainfo 测试失败: {str(e)}")
+        
+        # 使用ffmpeg
+        try:
+            cmd = [
+                "ffmpeg",
+                "-i", video_path,
+                "-hide_banner"
+            ]
+            result = subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace')
+            if result.returncode != 0 and "rotation" in result.stderr.lower():
+                logger.info("发现旋转信息在ffmpeg输出中")
+                # 尝试提取旋转信息
+                rotation_patterns = [r'rotate\s*:\s*(\d+)', r'rotation\s*:\s*(\d+)']
+                for pattern in rotation_patterns:
+                    matches = re.search(pattern, result.stderr, re.IGNORECASE)
+                    if matches:
+                        rotation = int(matches.group(1))
+                        logger.info(f"FFmpeg 旋转值: {rotation}°")
+                        break
+        except Exception as e:
+            logger.info(f"FFmpeg 测试失败: {str(e)}")
+        
+        # 总结
+        logger.info(f"最终旋转角度检测: {get_video_rotation(video_path)}°")
+        return get_video_rotation(video_path)
+    except Exception as e:
+        logger.error(f"测试失败: {str(e)}")
+        return 0
+
+
 if __name__ == "__main__":
+    # 测试旋转检测
+    import sys
+    if len(sys.argv) > 1:
+        test_file = sys.argv[1]
+        print(f"测试文件: {test_file}")
+        rotation = test_rotation_detection(test_file)
+        print(f"检测到的旋转角度: {rotation}")
+        codec = get_video_codec(test_file)
+        print(f"检测到的编码: {codec}")
+        sys.exit(0)
+        
+    # 原有的测试代码
     m = MaterialInfo()
     m.url = "/Users/harry/Downloads/IMG_2915.JPG"
     m.provider = "local"
     materials = preprocess_video([m], clip_duration=4)
     print(materials)
-
-    # txt_en = "Here's your guide to travel hacks for budget-friendly adventures"
-    # txt_zh = "测试长字段这是您的旅行技巧指南帮助您进行预算友好的冒险"
-    # font = utils.resource_dir() + "/fonts/STHeitiMedium.ttc"
-    # for txt in [txt_en, txt_zh]:
-    #     t, h = wrap_text(text=txt, max_width=1000, font=font, fontsize=60)
-    #     print(t)
-    #
-    # task_id = "aa563149-a7ea-49c2-b39f-8c32cc225baf"
-    # task_dir = utils.task_dir(task_id)
-    # video_file = f"{task_dir}/combined-1.mp4"
-    # audio_file = f"{task_dir}/audio.mp3"
-    # subtitle_file = f"{task_dir}/subtitle.srt"
-    # output_file = f"{task_dir}/final.mp4"
-    #
-    # # video_paths = []
-    # # for file in os.listdir(utils.storage_dir("test")):
-    # #     if file.endswith(".mp4"):
-    # #         video_paths.append(os.path.join(utils.storage_dir("test"), file))
-    # #
-    # # combine_videos(combined_video_path=video_file,
-    # #                audio_file=audio_file,
-    # #                video_paths=video_paths,
-    # #                video_aspect=VideoAspect.portrait,
-    # #                video_concat_mode=VideoConcatMode.random,
-    # #                max_clip_duration=5,
-    # #                threads=2)
-    #
-    # cfg = VideoParams()
-    # cfg.video_aspect = VideoAspect.portrait
-    # cfg.font_name = "STHeitiMedium.ttc"
-    # cfg.font_size = 60
-    # cfg.stroke_color = "#000000"
-    # cfg.stroke_width = 1.5
-    # cfg.text_fore_color = "#FFFFFF"
-    # cfg.text_background_color = "transparent"
-    # cfg.bgm_type = "random"
-    # cfg.bgm_file = ""
-    # cfg.bgm_volume = 1.0
-    # cfg.subtitle_enabled = True
-    # cfg.subtitle_position = "bottom"
-    # cfg.n_threads = 2
-    # cfg.paragraph_number = 1
-    #
-    # cfg.voice_volume = 1.0
-    #
-    # generate_video(video_path=video_file,
-    #                audio_path=audio_file,
-    #                subtitle_path=subtitle_file,
-    #                output_file=output_file,
-    #                params=cfg
-    #                )
