@@ -1103,6 +1103,21 @@ def generate_video_ffmpeg(
         else:
             hw_accel = "libx264"
             logger.info("使用软件编码器")
+            
+        # 获取编码器参数
+        encoder_params = EncoderConfig.get_encoder_params(hw_accel, max_width, max_height)
+        logger.info(f"编码器参数: {encoder_params}")
+        
+        # 构建编码器参数字符串
+        encoder_args = []
+        for key, value in encoder_params.items():
+            if key != "bitrate":  # 码率单独处理
+                encoder_args.extend([f"-{key}", str(value)])
+        
+        # 设置码率相关参数
+        bitrate = encoder_params["bitrate"]
+        maxrate = encoder_params["maxrate"]
+        bufsize = encoder_params["bufsize"]
         
         # 获取视频信息，检查是否需要处理
         video_metadata_cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", 
@@ -1172,10 +1187,11 @@ def generate_video_ffmpeg(
         # 设置缩放参数
         scale_filter = ""
         if needs_resize:
-            scale_filter = f"scale={max_width}:{max_height}:force_original_aspect_ratio=decrease,pad={max_width}:{max_height}:(ow-iw)/2:(oh-ih)/2"
+            # 使用高质量缩放算法
+            scale_filter = f"scale={max_width}:{max_height}:flags=lanczos+accurate_rnd,pad={max_width}:{max_height}:(ow-iw)/2:(oh-ih)/2"
         else:
             if rotate_filter:  # 仅旋转时可能需要设置输出分辨率
-                scale_filter = f"scale={final_width}:{final_height}"
+                scale_filter = f"scale={final_width}:{final_height}:flags=lanczos+accurate_rnd"
         
         # 确定是否需要处理视频
         needs_processing = rotation != 0 or needs_rotation_fix or needs_resize or original_codec != "h264"
@@ -1196,20 +1212,20 @@ def generate_video_ffmpeg(
             else:
                 full_filter = "format=yuv420p"
             
+            # 构建视频处理命令
             video_cmd = [
                 "ffmpeg", "-y",
                 "-i", video_path,
                 "-vf", full_filter,
                 "-c:v", hw_accel,
-                "-preset", "medium" if hw_accel == "libx264" else "p1",
-                "-crf", "23" if hw_accel == "libx264" else None,
+                "-b:v", f"{bitrate}k",
+                "-maxrate", f"{maxrate}k",
+                "-bufsize", f"{bufsize}k",
+                *encoder_args,  # 展开其他编码器参数
                 "-an",  # 不包含音频
                 "-map_metadata", "-1",  # 移除所有元数据
                 processed_video
             ]
-            
-            # 移除None值
-            video_cmd = [item for item in video_cmd if item is not None]
             
             logger.info(f"处理视频中... 应用滤镜: {full_filter}")
             video_process = subprocess.Popen(
@@ -1253,7 +1269,7 @@ def generate_video_ffmpeg(
             if not os.path.exists(processed_video):
                 logger.error("视频处理失败")
                 return None
-            
+
         # 获取音频信息
         audio_probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", audio_path]
         audio_info = json.loads(subprocess.check_output(audio_probe_cmd, universal_newlines=True))
@@ -1337,8 +1353,11 @@ def generate_video_ffmpeg(
                     # 确保字体名称安全
                     safe_font_name = params.font_name.replace(",", "\\,").replace(":", "\\:")
                     
+                    # 计算垂直边距
+                    vertical_margin = 50  # 从50改为100，使字幕位置更高
                     # 构建字幕滤镜
-                    subtitle_filter = f"subtitles={safe_subtitle_path}:force_style='FontName={safe_font_name},FontSize={params.font_size},PrimaryColour=&H{params.text_fore_color[1:]}&,OutlineColour=&H{params.stroke_color[1:]}&,BorderStyle=1,Outline={params.stroke_width},Alignment={alignment}'"
+                    subtitle_filter = f"subtitles={safe_subtitle_path}:force_style='FontName={safe_font_name},FontSize={params.font_size},PrimaryColour=&H{params.text_fore_color[1:]}&,OutlineColour=&H{params.stroke_color[1:]}&,BorderStyle=1,Outline={params.stroke_width},Alignment={alignment},MarginV={vertical_margin}'"
+
                     logger.info(f"字幕滤镜设置: {subtitle_filter}")
                 except Exception as e:
                     logger.error(f"字幕路径处理失败: {str(e)}")
@@ -1349,7 +1368,10 @@ def generate_video_ffmpeg(
                             # 最简单的处理方式
                             drive, rest = raw_path.split(":", 1)
                             raw_path = f"{drive}\\:{rest}"
-                        subtitle_filter = f"subtitles='{raw_path}':force_style='FontName={params.font_name},FontSize={params.font_size},Alignment={alignment}'"
+                          # 计算垂直边距
+                        vertical_margin = 50  # 从50改为100，使字幕位置更高
+                        # 构建字幕滤镜
+                        subtitle_filter = f"subtitles='{raw_path}':force_style='FontName={params.font_name},FontSize={params.font_size},Alignment={alignment},MarginV={vertical_margin}'"
                         logger.info(f"使用备选字幕滤镜: {subtitle_filter}")
                     except Exception as e2:
                         logger.error(f"备选字幕处理也失败: {str(e2)}")
@@ -2154,6 +2176,77 @@ def test_rotation_detection(video_path: str):
     except Exception as e:
         logger.error(f"测试失败: {str(e)}")
         return 0
+
+
+class EncoderConfig:
+    """编码器配置类"""
+    @staticmethod
+    def get_optimal_bitrate(width: int, height: int, is_4k: bool = False) -> int:
+        """计算最优码率（kbps）"""
+        pixel_count = width * height
+        if is_4k:
+            # 4K视频使用更高的码率基准
+            base_bitrate = 15000  # 15Mbps基准
+        else:
+            # 1080p及以下分辨率
+            base_bitrate = 8000   # 8Mbps基准
+            
+        # 根据像素数调整码率
+        bitrate = int((pixel_count / (1920 * 1080)) * base_bitrate)
+        
+        # 确保码率在合理范围内
+        return max(2000, min(bitrate, 20000))
+    
+    @staticmethod
+    def get_encoder_params(hw_accel: str, width: int, height: int) -> dict:
+        """获取编码器参数"""
+        is_4k = width * height >= 3840 * 2160
+        bitrate = EncoderConfig.get_optimal_bitrate(width, height, is_4k)
+        
+        # 基础参数
+        params = {
+            "bitrate": bitrate,
+            "maxrate": int(bitrate * 1.5),
+            "bufsize": int(bitrate * 2),
+            "refs": 4 if is_4k else 3,
+            "g": 30,  # GOP大小
+        }
+        
+        # 根据不同硬件加速器优化参数
+        if hw_accel == "h264_nvenc":
+            params.update({
+                "preset": "p4",  # 质量优先
+                "rc": "vbr",     # 可变码率
+                "cq": 19,        # 恒定质量参数
+                "profile": "high",
+                "level": "auto",
+                "spatial-aq": "1",    # 空间自适应量化
+                "temporal-aq": "1",   # 时间自适应量化
+                "b_ref_mode": "middle" # B帧参考模式
+            })
+        elif hw_accel == "h264_qsv":
+            params.update({
+                "preset": "veryslow",
+                "look_ahead": "1",
+                "global_quality": 23
+            })
+        elif hw_accel == "h264_amf":
+            params.update({
+                "quality": "quality",
+                "profile": "high",
+                "level": "auto",
+                "refs": 4
+            })
+        else:  # libx264
+            params.update({
+                "preset": "slow",
+                "crf": "18",
+                "profile": "high",
+                "level": "4.1",
+                "x264opts": "rc-lookahead=60:ref=4"
+            })
+        
+        return params
 
 
 if __name__ == "__main__":
