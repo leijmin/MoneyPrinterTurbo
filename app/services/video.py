@@ -484,6 +484,10 @@ def combine_videos_with_ffmpeg(combined_video_path: str, video_paths: List[str],
                 is_portrait = actual_height > actual_width
                 logger.info(f"视频实际方向: {'竖屏' if is_portrait else '横屏'}, 实际尺寸: {actual_width}x{actual_height}")
                 
+                # 计算宽高比，判断是否标准横屏或竖屏
+                aspect_ratio = actual_width / actual_height if actual_height > 0 else 0
+                is_standard_landscape = 1.7 < aspect_ratio < 1.8  # 接近16:9的横屏
+                
                 # 确定每个片段的时长
                 clip_duration = min(max_clip_duration, v_duration, remaining_duration)
                 if clip_duration <= 0:
@@ -510,6 +514,31 @@ def combine_videos_with_ffmpeg(combined_video_path: str, video_paths: List[str],
                 
                 # 处理HEVC编码的视频
                 if codec_name.lower() == 'hevc':
+                    # 判断是否是4K视频
+                    is_4k = (v_width >= 3840 or v_height >= 3840)
+                    
+                    # 根据原始视频方向与目标视频方向是否一致，决定是否添加旋转
+                    original_is_portrait = v_height > v_width
+                    target_is_portrait = video_aspect == VideoAspect.portrait
+                    
+                    logger.info(f"HEVC视频分析 - 原始方向: {'竖屏' if original_is_portrait else '横屏'}, "
+                               f"目标方向: {'竖屏' if target_is_portrait else '横屏'}, "
+                               f"宽高比: {aspect_ratio:.2f}, 标准横屏: {is_standard_landscape}, "
+                               f"4K: {is_4k}, 旋转: {rotation}°")
+                    
+                    # 4K HEVC视频特殊处理 - 横屏4K不应该被旋转成竖屏
+                    if is_4k and is_standard_landscape and not original_is_portrait and rotation == 0 and target_is_portrait:
+                        logger.info("⚠️ 检测到标准横屏4K HEVC视频，强制保持横屏方向，禁用旋转")
+                        rotate_filter = ""  # 禁用旋转
+                    # 4K视频但方向不一致的其他情况
+                    elif is_4k and original_is_portrait != target_is_portrait and rotation == 0:
+                        logger.info("⚠️ 4K HEVC视频方向与目标不一致，但不强制旋转")
+                        rotate_filter = ""  # 清除旋转滤镜
+                    
+                    # 提高4K HEVC视频处理质量
+                    hevc_crf = "15" if is_4k else "18"  # 提高画质参数
+                    hevc_preset = "slow" if is_4k else "medium"
+                    
                     # 先进行转码处理
                     hevc_output = os.path.join(temp_dir, f"hevc_converted_{idx:03d}.mp4")
                     
@@ -522,8 +551,8 @@ def combine_videos_with_ffmpeg(combined_video_path: str, video_paths: List[str],
                         "-map_metadata", "-1",  # 移除所有元数据
                         "-vf", f"{rotate_filter}format=yuv420p",  # 只旋转，不缩放
                         "-c:v", "libx264",
-                        "-crf", "23",
-                        "-preset", "medium",
+                        "-crf", hevc_crf,
+                        "-preset", hevc_preset,
                         "-pix_fmt", "yuv420p",
                         "-color_primaries", "bt709",
                         "-color_trc", "bt709",
@@ -661,6 +690,12 @@ def combine_videos_with_ffmpeg(combined_video_path: str, video_paths: List[str],
     except Exception as e:
         logger.error(f"视频合成过程中出错: {str(e)}", exc_info=True)
         return None
+    finally:
+        # 清理临时文件
+        try:
+            shutil.rmtree(temp_dir)
+        except Exception as e:
+            logger.error(f"清理临时文件失败: {str(e)}")
 
 
 # 为了使用上面重构的函数，我们需要添加这个帮助类的静态方法
@@ -1071,22 +1106,25 @@ def generate_video_ffmpeg(
     params: VideoParams,
 ):
     """使用纯ffmpeg实现视频生成，完全不依赖MoviePy"""
-    logger.info(f"使用ffmpeg生成视频")
-    aspect = VideoAspect(params.video_aspect)
-    max_width, max_height = aspect.to_resolution()
-
-    logger.info(f"最大视频尺寸: {max_width} x {max_height}")
-    logger.info(f"视频: {video_path}")
-    logger.info(f"音频: {audio_path}")
-    logger.info(f"字幕: {subtitle_path}")
-    logger.info(f"输出: {output_file}")
-
-    # 创建临时目录
-    temp_dir = os.path.join(os.path.dirname(output_file), f"temp_ffmpeg_{str(uuid.uuid4())}")
-    os.makedirs(temp_dir, exist_ok=True)
-    
     try:
-        # 检测可用的硬件加速
+        logger.info("使用ffmpeg生成视频")
+        temp_dir = os.path.dirname(output_file)
+        
+        # 获取目标分辨率
+        if params.video_aspect == VideoAspect.portrait:
+            max_width = 1080
+            max_height = 1920
+        else:
+            max_width = 1920
+            max_height = 1080
+        
+        logger.info(f"最大视频尺寸: {max_width} x {max_height}")
+        logger.info(f"视频: {video_path}")
+        logger.info(f"音频: {audio_path}")
+        logger.info(f"字幕: {subtitle_path}")
+        logger.info(f"输出: {output_file}")
+        
+        # 检查硬件加速支持
         hw_accel = ""
         hw_accel_cmd = ["ffmpeg", "-hide_banner", "-encoders"]
         hw_encoders = subprocess.check_output(hw_accel_cmd, universal_newlines=True)
@@ -1103,108 +1141,107 @@ def generate_video_ffmpeg(
         else:
             hw_accel = "libx264"
             logger.info("使用软件编码器")
+        
+        # 获取视频信息
+        probe_cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", 
+                    "-show_entries", "stream=width,height,codec_name", "-of", "json", video_path]
+        probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+        
+        if probe_result.returncode != 0:
+            logger.error(f"无法获取视频信息: {probe_result.stderr}")
+            return None
+        
+        video_info = json.loads(probe_result.stdout)
+        
+        if "streams" not in video_info or not video_info["streams"]:
+            logger.error("无法读取视频流信息")
+            return None
+        
+        stream = video_info["streams"][0]
+        original_width = int(stream.get("width", 0))
+        original_height = int(stream.get("height", 0))
+        original_codec = stream.get("codec_name", "")
+                
+        logger.info(f"原始视频信息 - 宽: {original_width}, 高: {original_height}, 编码: {original_codec}")
+        
+        # 处理视频分辨率 - 预处理应该已经处理了旋转问题，这里只关注分辨率
+        processed_video = os.path.join(temp_dir, "processed_video.mp4")
+        
+        # 设置尺寸调整滤镜
+        scale_filter = ""
+        needs_resize = False
+        
+        # 检查是否需要调整尺寸
+        if original_width > max_width or original_height > max_height:
+            needs_resize = True
+            logger.info(f"视频尺寸超过限制，需要调整")
             
-        # 获取编码器参数
+            # 计算调整后的尺寸，保持宽高比
+            if params.video_aspect == VideoAspect.portrait:
+                # 目标是竖屏视频
+                if original_height > original_width:
+                    # 原始也是竖屏，保持比例
+                    scale_ratio = min(max_width / original_width, max_height / original_height)
+                    target_width = int(original_width * scale_ratio)
+                    target_height = int(original_height * scale_ratio)
+                    scale_filter = f"scale={target_width}:{target_height}:flags=lanczos+accurate_rnd"
+                else:
+                    # 原始是横屏，需要居中放置在竖屏框架中
+                    scale_ratio = min(max_width / original_width, max_height / original_height)
+                    target_width = int(original_width * scale_ratio)
+                    target_height = int(original_height * scale_ratio)
+                    scale_filter = f"scale={target_width}:{target_height}:flags=lanczos+accurate_rnd,pad={max_width}:{max_height}:(ow-iw)/2:(oh-ih)/2"
+            else:
+                # 目标是横屏视频
+                if original_width > original_height:
+                    # 原始也是横屏，保持比例
+                    scale_ratio = min(max_width / original_width, max_height / original_height)
+                    target_width = int(original_width * scale_ratio)
+                    target_height = int(original_height * scale_ratio)
+                    scale_filter = f"scale={target_width}:{target_height}:flags=lanczos+accurate_rnd"
+                else:
+                    # 原始是竖屏，需要居中放置在横屏框架中
+                    scale_ratio = min(max_width / original_width, max_height / original_height)
+                    target_width = int(original_width * scale_ratio)
+                    target_height = int(original_height * scale_ratio)
+                    scale_filter = f"scale={target_width}:{target_height}:flags=lanczos+accurate_rnd,pad={max_width}:{max_height}:(ow-iw)/2:(oh-ih)/2"
+        else:
+            logger.info("视频尺寸在限制范围内，保持原始尺寸")
+        
+        # 编码参数设置
+        is_4k = original_width * original_height >= 3840 * 2160
+        is_hevc = original_codec.lower() == 'hevc'
+        is_4k_hevc = is_4k and is_hevc
+        
+        # 获取优化的编码参数
         encoder_params = EncoderConfig.get_encoder_params(hw_accel, max_width, max_height)
         logger.info(f"编码器参数: {encoder_params}")
         
-        # 构建编码器参数字符串
-        encoder_args = []
-        for key, value in encoder_params.items():
-            if key != "bitrate":  # 码率单独处理
-                encoder_args.extend([f"-{key}", str(value)])
-        
-        # 设置码率相关参数
+        # 提取编码参数
         bitrate = encoder_params["bitrate"]
         maxrate = encoder_params["maxrate"]
         bufsize = encoder_params["bufsize"]
         
-        # 获取视频信息，检查是否需要处理
-        video_metadata_cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", 
-                               "-show_entries", "stream=width,height,codec_name", 
-                               "-of", "json", video_path]
-        video_info = json.loads(subprocess.check_output(video_metadata_cmd, universal_newlines=True))
-        
-        original_width = 0
-        original_height = 0
-        original_codec = ""
-        
-        # 获取原始视频信息
-        if "streams" in video_info and video_info["streams"]:
-            stream = video_info["streams"][0]
-            original_width = int(stream.get("width", 0))
-            original_height = int(stream.get("height", 0))
-            original_codec = stream.get("codec_name", "").lower()
-            
-        logger.info(f"原始视频信息 - 宽: {original_width}, 高: {original_height}, 编码: {original_codec}")
-        
-        # 处理视频旋转和分辨率
-        processed_video = os.path.join(temp_dir, "processed_video.mp4")
-        rotation = get_video_rotation(video_path)
-        if rotation != 0:
-            logger.info(f"⚠️ 检测到视频需要旋转 {rotation}° 度")
-        else:
-            logger.info(f"视频旋转检测值: {rotation}°")
-        
-        # 检查是否需要旋转
-        is_portrait_orientation = original_height > original_width
-        target_is_portrait = max_height > max_width
-        
-        # 特殊情况：竖屏拍摄但宽高比例是横屏
-        needs_rotation_fix = False
-        if target_is_portrait and not is_portrait_orientation and rotation == 0:
-            # 检查宽高比是否接近16:9
-            aspect_ratio = original_width / original_height if original_height > 0 else 0
-            if 1.7 < aspect_ratio < 1.8:  # 接近16:9
-                logger.info("检测到可能是竖屏视频被记录为横屏，考虑旋转90度")
-                needs_rotation_fix = True
-        
-        # 设置旋转滤镜
-        rotate_filter = ""
-        if rotation == 90 or needs_rotation_fix:
-            rotate_filter = "transpose=1,"
-        elif rotation == 180:
-            rotate_filter = "transpose=2,transpose=2,"
-        elif rotation == 270:
-            rotate_filter = "transpose=2,"
-        
-        # 确定是否需要进行尺寸调整
-        needs_resize = False
-        final_width = original_width
-        final_height = original_height
-        
-        # 旋转后的尺寸
-        if rotate_filter:
-            final_width, final_height = final_height, final_width
-        
-        # 检查是否超过最大分辨率限制
-        if final_width > max_width or final_height > max_height:
-            needs_resize = True
-            logger.info(f"视频尺寸超过限制，需要调整")
-        else:
-            logger.info(f"视频尺寸在限制范围内，保持原始尺寸")
-        
-        # 设置缩放参数
-        scale_filter = ""
-        if needs_resize:
-            # 使用高质量缩放算法
-            scale_filter = f"scale={max_width}:{max_height}:flags=lanczos+accurate_rnd,pad={max_width}:{max_height}:(ow-iw)/2:(oh-ih)/2"
-        else:
-            if rotate_filter:  # 仅旋转时可能需要设置输出分辨率
-                scale_filter = f"scale={final_width}:{final_height}:flags=lanczos+accurate_rnd"
+        # 获取编码器参数列表
+        encoder_args = []
+        for key, value in encoder_params.items():
+            if key not in ["bitrate", "maxrate", "bufsize"]:
+                encoder_args.extend([f"-{key}", str(value)])
         
         # 确定是否需要处理视频
-        needs_processing = rotation != 0 or needs_rotation_fix or needs_resize or original_codec != "h264"
+        needs_processing = needs_resize or original_codec != "h264"
+        
+        # 4K HEVC视频特殊处理：保持高质量
+        if is_4k_hevc:
+            # 增加码率以保持4K视频质量
+            bitrate = min(20000, int(bitrate * 1.5))  # 提高码率，最高20Mbps
+            maxrate = min(30000, int(maxrate * 1.5))  # 提高最大码率，最高30Mbps
+            bufsize = min(40000, int(bufsize * 1.5))  # 提高缓冲大小
+            logger.info(f"检测到4K HEVC视频，提高码率: {bitrate}k, 最大码率: {maxrate}k")
         
         if needs_processing:
             # 构建完整的视频滤镜
-            full_filter = ""
-            if rotate_filter and scale_filter:
-                full_filter = f"{rotate_filter}{scale_filter}"
-            elif rotate_filter:
-                full_filter = rotate_filter.rstrip(",")
-            elif scale_filter:
-                full_filter = scale_filter
+            full_filter = scale_filter
             
             # 添加像素格式转换确保兼容性
             if full_filter:
@@ -1354,7 +1391,7 @@ def generate_video_ffmpeg(
                     safe_font_name = params.font_name.replace(",", "\\,").replace(":", "\\:")
                     
                     # 计算垂直边距
-                    vertical_margin = 50  # 从50改为100，使字幕位置更高
+                    vertical_margin = 50
                     # 构建字幕滤镜
                     subtitle_filter = f"subtitles={safe_subtitle_path}:force_style='FontName={safe_font_name},FontSize={params.font_size},PrimaryColour=&H{params.text_fore_color[1:]}&,OutlineColour=&H{params.stroke_color[1:]}&,BorderStyle=1,Outline={params.stroke_width},Alignment={alignment},MarginV={vertical_margin}'"
 
@@ -1368,8 +1405,8 @@ def generate_video_ffmpeg(
                             # 最简单的处理方式
                             drive, rest = raw_path.split(":", 1)
                             raw_path = f"{drive}\\:{rest}"
-                          # 计算垂直边距
-                        vertical_margin = 50  # 从50改为100，使字幕位置更高
+                        # 计算垂直边距
+                        vertical_margin = 50
                         # 构建字幕滤镜
                         subtitle_filter = f"subtitles='{raw_path}':force_style='FontName={params.font_name},FontSize={params.font_size},Alignment={alignment},MarginV={vertical_margin}'"
                         logger.info(f"使用备选字幕滤镜: {subtitle_filter}")
@@ -1528,7 +1565,8 @@ def generate_video_ffmpeg(
     finally:
         # 清理临时文件
         try:
-            shutil.rmtree(temp_dir)
+            if 'temp_dir' in locals() and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
         except Exception as e:
             logger.error(f"清理临时文件失败: {str(e)}")
 
@@ -1583,6 +1621,15 @@ def preprocess_video_ffmpeg(materials: List[MaterialInfo], clip_duration=4):
                         rotation = get_video_rotation(material.url)
                         logger.info(f"视频信息: 宽={width}, 高={height}, 编码={codec}, 旋转={rotation}°")
                         
+                        # 计算宽高比，判断是否为标准横屏
+                        aspect_ratio = width / height if height > 0 else 0
+                        is_standard_landscape = 1.7 < aspect_ratio < 1.8  # 接近16:9的标准横屏
+                        is_4k = width >= 3840 or height >= 3840
+                        is_hevc = codec.lower() == 'hevc'
+                        is_4k_hevc = is_4k and is_hevc  # 添加合并变量，与generate_video_ffmpeg保持一致
+                        
+                        logger.info(f"视频分析 - 宽高比: {aspect_ratio:.2f}, 是4K: {is_4k}, 是HEVC: {is_hevc}, 标准横屏: {is_standard_landscape}")
+                        
                         # 判断视频是否需要处理
                         needs_processing = False
                         
@@ -1596,8 +1643,8 @@ def preprocess_video_ffmpeg(materials: List[MaterialInfo], clip_duration=4):
                             logger.info(f"非H264编码视频，需要转码: {codec}")
                             needs_processing = True
                         
-                        # 3. 处理旋转情况
-                        if rotation in [90, 180, 270]:
+                        # 3. 处理旋转情况 - 任何需要旋转的视频都必须处理
+                        if rotation != 0:
                             logger.info(f"视频需要旋转: {rotation}°")
                             needs_processing = True
                         
@@ -1610,8 +1657,18 @@ def preprocess_video_ffmpeg(materials: List[MaterialInfo], clip_duration=4):
                         # 考虑旋转后的尺寸
                         effective_width = width
                         effective_height = height
-                        if rotation in [90, 270]:
+                        
+                        # 判断特殊情况：4K HEVC横屏视频强制保持原始方向
+                        is_special_hevc_landscape = False
+                        if is_4k_hevc and is_standard_landscape and width > height:
+                            logger.info("⚠️ 检测到标准横屏4K HEVC视频，强制保持原始方向")
+                            is_special_hevc_landscape = True
+                            rotation = 0  # 禁用旋转
+                        
+                        # 正常情况下考虑旋转后的尺寸
+                        if rotation in [90, 270] and not is_special_hevc_landscape:
                             effective_width, effective_height = height, width
+                            logger.info(f"考虑旋转后的尺寸: {effective_width}x{effective_height}")
                         
                         # 根据比例判断是横屏还是竖屏
                         is_portrait = effective_height > effective_width
@@ -1624,28 +1681,43 @@ def preprocess_video_ffmpeg(materials: List[MaterialInfo], clip_duration=4):
                             logger.info(f"横屏视频尺寸超过限制: {effective_width}x{effective_height}")
                             needs_processing = True
                         
+                        # 5. 特殊处理：对于标准横屏但实际应该是竖屏的视频 (非4K HEVC特殊情况)
+                        if not is_portrait and not is_special_hevc_landscape and rotation == 0:
+                            if 1.7 < aspect_ratio < 1.8:  # 接近16:9
+                                # 可能是竖屏视频被错误存储为横屏
+                                # 但不是4K HEVC标准横屏视频
+                                if not is_4k_hevc:
+                                    logger.info("检测到可能是竖屏视频被记录为横屏，标记为需要旋转")
+                                    needs_processing = True
+                        
                         if needs_processing:
                             logger.info(f"需要处理的视频: {material.url}")
                             output_path = os.path.join(os.path.dirname(material.url), f"processed_{os.path.basename(material.url)}")
                             
                             # 设置旋转滤镜
                             rotate_filter = ""
-                            if rotation == 90:
-                                rotate_filter = "transpose=1,"  # 顺时针旋转90度
-                                logger.info("应用90度顺时针旋转滤镜")
-                            elif rotation == 180:
-                                rotate_filter = "transpose=2,transpose=2,"  # 旋转180度
-                                logger.info("应用180度旋转滤镜")
-                            elif rotation == 270 or rotation == -90:
-                                rotate_filter = "transpose=2,"  # 逆时针旋转90度（等于顺时针旋转270度）
-                                logger.info("应用270度顺时针旋转滤镜")
                             
-                            # 特殊情况处理：竖屏拍摄但分辨率是横屏
-                            if not is_portrait and rotation == 0 and 1.7 < (width / height) < 1.8:
-                                # 添加90度旋转
-                                rotate_filter = "transpose=1,"
-                                # 交换宽高
-                                width, height = height, width
+                            # 只有非特殊情况的视频才应用旋转处理
+                            if not is_special_hevc_landscape:
+                                if rotation == 90:
+                                    rotate_filter = "transpose=1,"  # 顺时针旋转90度
+                                    logger.info("应用90度顺时针旋转滤镜")
+                                elif rotation == 180:
+                                    rotate_filter = "transpose=2,transpose=2,"  # 旋转180度
+                                    logger.info("应用180度旋转滤镜")
+                                elif rotation == 270 or rotation == -90:
+                                    rotate_filter = "transpose=2,"  # 逆时针旋转90度（等于顺时针旋转270度）
+                                    logger.info("应用270度顺时针旋转滤镜")
+                                
+                                # 特殊情况处理：竖屏拍摄但分辨率是横屏 - 排除特殊4K HEVC横屏视频
+                                if not is_portrait and rotation == 0 and 1.7 < (width / height) < 1.8 and not is_4k_hevc:
+                                    # 可能是竖屏视频被错误存储为横屏
+                                    rotate_filter = "transpose=1,"
+                                    logger.info("检测到普通横屏视频可能需要旋转90度")
+                                    # 交换宽高
+                                    width, height = height, width
+                            else:
+                                logger.info("4K HEVC标准横屏视频，不应用任何旋转")
                             
                             # 设置输出分辨率
                             target_width = width
@@ -1931,41 +2003,89 @@ def combine_videos_ffmpeg(
                             # 竖屏视频
                             if aspect == VideoAspect.portrait:
                                 # 目标也是竖屏，保持比例
-                                scale_filter = "scale=1080:-2"
+                                scale_filter = "scale=1080:-2:flags=lanczos+accurate_rnd"
                             else:
                                 # 目标是横屏，需要确保不裁剪内容
-                                scale_filter = "scale=-2:1080"
+                                scale_filter = "scale=-2:1080:flags=lanczos+accurate_rnd"
                         else:
                             # 横屏视频
                             if aspect == VideoAspect.landscape:
                                 # 目标也是横屏，保持比例
-                                scale_filter = "scale=1920:-2"
+                                scale_filter = "scale=1920:-2:flags=lanczos+accurate_rnd"
                             else:
                                 # 目标是竖屏，需要确保不裁剪内容
-                                scale_filter = "scale=-2:1920"
+                                scale_filter = "scale=-2:1920:flags=lanczos+accurate_rnd"
                         
+                        # 专门针对4K HEVC视频的特殊处理
+                        if codec.lower() == 'hevc' and (v_width >= 3840 or v_height >= 3840):
+                            # 计算宽高比判断原始方向
+                            aspect_ratio = v_width / v_height
+                            is_standard_landscape = 1.7 < aspect_ratio < 1.8
+                            
+                            if is_standard_landscape and rotation == 0:
+                                # 明确是标准横屏4K视频，保持横屏方向
+                                logger.info("检测到标准横屏4K HEVC视频，保持原始横屏方向")
+                                # 如果仅需要转码但不需要旋转，只调整分辨率
+                                target_width = min(v_width, 1920)
+                                target_height = int(target_width / aspect_ratio)
+                                rotate_filter = ""  # 禁用旋转
+
                         # 处理HEVC编码的视频
                         if codec.lower() == 'hevc':
+                            # 判断是否是4K视频
+                            is_4k = (v_width >= 3840 or v_height >= 3840)
+                            
+                            # 根据原始视频方向与目标视频方向是否一致，决定是否添加旋转
+                            # 更准确地判断视频实际方向
+                            is_original_portrait = v_height > v_width
+                            is_target_portrait = aspect == VideoAspect.portrait
+                            
+                            # 计算原始宽高比
+                            aspect_ratio = v_width / v_height if v_height > 0 else 0
+                            is_standard_landscape = 1.7 < aspect_ratio < 1.8  # 接近16:9的横屏
+                            
+                            logger.info(f"HEVC视频分析 - 原始方向: {'竖屏' if is_original_portrait else '横屏'}, "
+                                       f"目标方向: {'竖屏' if is_target_portrait else '横屏'}, "
+                                       f"宽高比: {aspect_ratio:.2f}, 标准横屏: {is_standard_landscape}, "
+                                       f"4K: {is_4k}, 旋转: {rotation}°")
+                            
+                            # 4K HEVC视频特殊处理 - 横屏4K不应该被旋转成竖屏
+                            if is_4k and is_standard_landscape and not is_original_portrait and rotation == 0 and is_target_portrait:
+                                logger.info("⚠️ 检测到标准横屏4K HEVC视频，强制保持横屏方向，禁用旋转")
+                                rotate_filter = ""  # 禁用旋转
+                                
+                                # 修改缩放滤镜以适应横屏到竖屏的转换
+                                scale_filter = "scale=-2:1080:flags=lanczos+accurate_rnd"  # 确保横屏能被正确显示
+                            # 4K视频但方向不一致的其他情况
+                            elif is_4k and is_original_portrait != is_target_portrait and rotation == 0:
+                                logger.info("⚠️ 4K HEVC视频方向与目标不一致，但不强制旋转")
+                                rotate_filter = ""  # 清除旋转滤镜
+                            
+                            # 提高4K HEVC视频处理质量
+                            hevc_crf = "15" if is_4k else "18"  # 提高画质参数
+                            hevc_preset = "slow" if is_4k else "medium"
+                            
                             # 先进行转码处理
                             hevc_output = os.path.join(temp_dir, f"hevc_converted_{segment_index:03d}.mp4")
                             
-                            # 使用更精确的处理参数
+                            # 使用更强大的处理参数
                             hevc_cmd = [
                                 "ffmpeg", "-y",
                                 "-ss", str(start_time),
                                 "-i", video_path,
                                 "-t", str(segment_duration),
                                 "-map_metadata", "-1",  # 移除所有元数据
-                                "-vf", f"{rotate_filter}format=yuv420p",
+                                "-vf", f"{rotate_filter}format=yuv420p",  # 只旋转，不缩放
                                 "-c:v", "libx264",
-                                "-crf", "23",
-                                "-preset", "medium",
+                                "-crf", hevc_crf,
+                                "-preset", hevc_preset,
                                 "-pix_fmt", "yuv420p",
                                 "-color_primaries", "bt709",
                                 "-color_trc", "bt709",
                                 "-colorspace", "bt709",
                                 "-movflags", "+faststart",
-                                "-an",  # 不包含音频
+                                "-c:a", "aac",
+                                "-b:a", "128k",
                                 "-max_muxing_queue_size", "9999",
                                 hevc_output
                             ]
@@ -2169,6 +2289,39 @@ def test_rotation_detection(video_path: str):
                         break
         except Exception as e:
             logger.info(f"FFmpeg 测试失败: {str(e)}")
+            
+        # 获取视频详细信息
+        try:
+            info_cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", 
+                       "-show_entries", "stream=width,height,codec_name,display_aspect_ratio", 
+                       "-of", "json", video_path]
+            info_result = subprocess.run(info_cmd, capture_output=True, text=True)
+            
+            if info_result.returncode == 0:
+                video_info = json.loads(info_result.stdout)
+                if "streams" in video_info and video_info["streams"]:
+                    stream = video_info["streams"][0]
+                    width = int(stream.get("width", 0))
+                    height = int(stream.get("height", 0))
+                    codec = stream.get("codec_name", "").lower()
+                    aspect_ratio = stream.get("display_aspect_ratio", "")
+                    
+                    logger.info(f"视频信息 - 宽: {width}, 高: {height}, 编码: {codec}, 显示宽高比: {aspect_ratio}")
+                    logger.info(f"视频方向: {'竖屏' if height > width else '横屏'}")
+                    
+                    # 计算实际宽高比
+                    if height > 0:
+                        actual_ratio = width / height
+                        logger.info(f"实际宽高比: {actual_ratio:.4f}")
+                        
+                        # 判断是否接近16:9
+                        if 1.7 < actual_ratio < 1.8:
+                            logger.info("宽高比接近16:9")
+                        # 判断是否接近9:16
+                        elif 0.5 < actual_ratio < 0.6:
+                            logger.info("宽高比接近9:16")
+        except Exception as e:
+            logger.info(f"获取视频信息失败: {str(e)}")
         
         # 总结
         logger.info(f"最终旋转角度检测: {get_video_rotation(video_path)}°")
@@ -2184,18 +2337,26 @@ class EncoderConfig:
     def get_optimal_bitrate(width: int, height: int, is_4k: bool = False) -> int:
         """计算最优码率（kbps）"""
         pixel_count = width * height
+        
+        # 超高清视频 (4K及以上)
         if is_4k:
-            # 4K视频使用更高的码率基准
+            base_bitrate = 30000  # 30Mbps基准
+        # 高清视频 (1080p-2K)
+        elif pixel_count >= 1920 * 1080:
             base_bitrate = 15000  # 15Mbps基准
+        # 标清视频
         else:
-            # 1080p及以下分辨率
             base_bitrate = 8000   # 8Mbps基准
             
-        # 根据像素数调整码率
-        bitrate = int((pixel_count / (1920 * 1080)) * base_bitrate)
+        # 根据像素数精确调整码率
+        adjusted_bitrate = int((pixel_count / (1920 * 1080)) * base_bitrate)
+        
+        # 设置合理的下限和上限
+        min_bitrate = 6000   # 最低保证6Mbps
+        max_bitrate = 40000  # 最高不超过40Mbps
         
         # 确保码率在合理范围内
-        return max(2000, min(bitrate, 20000))
+        return max(min_bitrate, min(adjusted_bitrate, max_bitrate))
     
     @staticmethod
     def get_encoder_params(hw_accel: str, width: int, height: int) -> dict:
@@ -2207,44 +2368,68 @@ class EncoderConfig:
         params = {
             "bitrate": bitrate,
             "maxrate": int(bitrate * 1.5),
-            "bufsize": int(bitrate * 2),
-            "refs": 4 if is_4k else 3,
+            "bufsize": int(bitrate * 3),  # 增大缓冲区
+            "refs": 6 if is_4k else 5,    # 增加参考帧数量
             "g": 30,  # GOP大小
         }
         
         # 根据不同硬件加速器优化参数
         if hw_accel == "h264_nvenc":
             params.update({
-                "preset": "p4",  # 质量优先
-                "rc": "vbr",     # 可变码率
-                "cq": 19,        # 恒定质量参数
-                "profile": "high",
-                "level": "auto",
-                "spatial-aq": "1",    # 空间自适应量化
-                "temporal-aq": "1",   # 时间自适应量化
-                "b_ref_mode": "middle" # B帧参考模式
+                "preset": "p7",    # 最高质量预设
+                "tune": "hq",      # 高质量调优
+                "rc": "vbr",       # 使用可变码率模式
+                "cq": 15,          # 降低质量参数以提高画质
+                "qmin": 10,        # 最小量化参数
+                "qmax": 25,        # 最大量化参数
+                "profile:v": "high",
+                # 完全移除level参数，让NVENC自动选择合适的level
+                "spatial-aq": "1", # 空间自适应量化
+                "temporal-aq": "1", # 时间自适应量化
+                "rc-lookahead": "32", # 前瞻帧数
+                "surfaces": "32"    # 表面缓冲区
             })
         elif hw_accel == "h264_qsv":
             params.update({
-                "preset": "veryslow",
+                "preset": "veryslow", # 最慢压缩 = 最高质量
                 "look_ahead": "1",
-                "global_quality": 23
+                "global_quality": 15, # 高质量参数
+                "profile:v": "high"
+                # 移除level参数
             })
         elif hw_accel == "h264_amf":
             params.update({
                 "quality": "quality",
-                "profile": "high",
-                "level": "auto",
-                "refs": 4
+                "profile:v": "high",
+                # 移除level参数
+                "refs": 6 if is_4k else 5,  # 增加参考帧
+                "preanalysis": "1",
+                "vbaq": "1",  # 启用方差基础自适应量化
+                "enforce_hrd": "1"
+                # 移除可能引起问题的参数
             })
-        else:  # libx264
+        else:  # libx264软件编码
             params.update({
-                "preset": "slow",
-                "crf": "18",
-                "profile": "high",
-                "level": "4.1",
-                "x264opts": "rc-lookahead=60:ref=4"
+                "preset": "slow",  # 慢速预设，提高质量
+                "crf": "18",       # 高质量CRF值
+                "profile:v": "high",
+                # 移除level参数
+                "refs": 5,         # 参考帧数量
+                "psy": "1",        # 启用心理视觉优化
+                "psy-rd": "1.0:0.05"  # 心理视觉优化率失真
             })
+        
+        # 为4K视频添加额外参数
+        if is_4k:
+            # 增加4K视频的颜色属性和质量设置
+            extra_params = {
+                "pix_fmt": "yuv420p10le" if hw_accel == "libx264" else "yuv420p", # 10-bit色深(仅软件编码)
+                "colorspace": "bt709",     # 标准色彩空间
+                "color_primaries": "bt709", # 色彩原色
+                "color_trc": "bt709",       # 色彩传输特性
+                "movflags": "+faststart"    # 文件元数据前置，便于快速播放
+            }
+            params.update(extra_params)
         
         return params
 
@@ -2255,10 +2440,74 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         test_file = sys.argv[1]
         print(f"测试文件: {test_file}")
+        
+        # 详细输出测试文件的所有信息
+        print("\n===== 视频详细信息 =====")
+        try:
+            info_cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", 
+                       "-show_entries", "stream=width,height,codec_name,display_aspect_ratio", 
+                       "-of", "json", test_file]
+            info_result = subprocess.run(info_cmd, capture_output=True, text=True)
+            
+            if info_result.returncode == 0:
+                video_info = json.loads(info_result.stdout)
+                if "streams" in video_info and video_info["streams"]:
+                    stream = video_info["streams"][0]
+                    width = int(stream.get("width", 0))
+                    height = int(stream.get("height", 0))
+                    codec = stream.get("codec_name", "").lower()
+                    aspect_ratio = stream.get("display_aspect_ratio", "")
+                    
+                    print(f"视频尺寸: {width}x{height}")
+                    print(f"编码格式: {codec}")
+                    print(f"显示宽高比: {aspect_ratio}")
+                    print(f"视频方向: {'竖屏' if height > width else '横屏'}")
+                    
+                    if height > 0:
+                        actual_ratio = width / height
+                        print(f"实际宽高比: {actual_ratio:.4f}")
+                        
+                        if 1.7 < actual_ratio < 1.8:
+                            print("宽高比接近16:9")
+                        elif 0.5 < actual_ratio < 0.6:
+                            print("宽高比接近9:16")
+        except Exception as e:
+            print(f"获取视频信息失败: {str(e)}")
+            
+        print("\n===== 旋转检测 =====")
         rotation = test_rotation_detection(test_file)
         print(f"检测到的旋转角度: {rotation}")
+        
+        print("\n===== 编码检测 =====")
         codec = get_video_codec(test_file)
         print(f"检测到的编码: {codec}")
+        
+        # 特殊情况判断
+        print("\n===== 特殊情况判断 =====")
+        is_portrait_orientation = height > width
+        is_4k = (width >= 3840 or height >= 3840)
+        is_hevc = codec.lower() == 'hevc'
+        
+        print(f"是否竖屏: {is_portrait_orientation}")
+        print(f"是否4K视频: {is_4k}")
+        print(f"是否HEVC编码: {is_hevc}")
+        print(f"是否4K HEVC视频: {is_4k and is_hevc}")
+        
+        if is_4k and is_hevc:
+            print("这是4K HEVC视频，需要特殊处理")
+            
+            aspect_ratio = width / height if height > 0 else 0
+            if 1.7 < aspect_ratio < 1.8 and rotation == 0:
+                print("这是16:9的横屏4K HEVC视频，不需要旋转")
+            elif rotation != 0:
+                print(f"这是有旋转信息的4K HEVC视频，旋转角度: {rotation}°")
+        
+        if not is_portrait_orientation and rotation == 0:
+            print("这是横屏视频，无旋转信息")
+            aspect_ratio = width / height if height > 0 else 0
+            if 1.7 < aspect_ratio < 1.8:
+                print("这是标准16:9横屏视频")
+        
         sys.exit(0)
         
     # 原有的测试代码
