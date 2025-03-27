@@ -18,7 +18,7 @@ services:
       dockerfile: Dockerfile
     container_name: "api"
     ports:
-      - "8080:8080"
+      - "3004:3004"
     command: [ "python3", "main.py" ]
     volumes: *common-volumes
     restart: always

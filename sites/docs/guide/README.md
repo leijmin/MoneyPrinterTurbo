@@ -52,7 +52,7 @@ Open your browser and visit http://0.0.0.0:8501
 
 #### ③ Access the API Interface
 
-Open your browser and visit http://0.0.0.0:8080/docs Or http://0.0.0.0:8080/redoc
+Open your browser and visit http://0.0.0.0:3004/docs Or http://0.0.0.0:3004/redoc
 
 ### Manual Deployment 📦
 
@@ -122,7 +122,7 @@ After launching, the browser will open automatically
 python main.py
 ```
 
-After launching, you can view the `API documentation` at http://127.0.0.1:8080/docs and directly test the interface
+After launching, you can view the `API documentation` at http://127.0.0.1:3004/docs and directly test the interface
 online for a quick experience.
 
 ## License 📝
