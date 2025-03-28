@@ -1,7 +1,7 @@
 import glob
 import os
 import random
-from typing import List
+from typing import List, Optional
 import time
 import re
 import json
@@ -24,11 +24,17 @@ from app.models.schema import (
 )
 from app.utils import utils
 
-# 导入视频元数据处理模块
 from app.services.video_metadata import VideoMetadataExtractor
-
-# 导入预处理模块
 from app.services.preprocess_video import VideoPreprocessor
+from app.services.video_encoder import EncoderConfig
+
+# 预处理视频 给外部调用
+def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
+    """
+    使用ffmpeg处理视频和图片素材
+    """
+    # 调用新模块的实现
+    return VideoPreprocessor.preprocess_video(materials, clip_duration)
 
 
 def get_bgm_file(bgm_type: str = "random", bgm_file: str = ""):
@@ -46,15 +52,6 @@ def get_bgm_file(bgm_type: str = "random", bgm_file: str = ""):
 
     return ""
 
-# 为了向后兼容，保留get_video_rotation函数，但是委托给VideoMetadataExtractor类
-def get_video_rotation(video_path: str) -> int:
-    """获取视频旋转元数据，支持多种格式的旋转信息"""
-    return VideoMetadataExtractor.get_video_rotation(video_path)
-
-# 同样保留get_video_codec函数，但是委托给VideoMetadataExtractor类
-def get_video_codec(video_path: str) -> str:
-    """获取视频编码格式和详细信息"""
-    return VideoMetadataExtractor.get_video_codec(video_path)
 
 def combine_videos(
     combined_video_path: str,
@@ -84,28 +81,6 @@ def combine_videos(
     """
     # 调用纯ffmpeg实现
     logger.info("使用纯ffmpeg方法合并视频")
-    return combine_videos_ffmpeg(
-        combined_video_path=combined_video_path,
-        video_paths=video_paths,
-        audio_file=audio_file,
-        video_aspect=video_aspect,
-        video_concat_mode=video_concat_mode,
-        video_transition_mode=video_transition_mode,
-        max_clip_duration=max_clip_duration,
-        threads=threads
-    )
-
-def combine_videos_ffmpeg(
-    combined_video_path: str,
-    video_paths: List[str],
-    audio_file: str,
-    video_aspect: VideoAspect = VideoAspect.portrait,
-    video_concat_mode: VideoConcatMode = VideoConcatMode.random,
-    video_transition_mode: VideoTransitionMode = None,
-    max_clip_duration: int = 5,
-    threads: int = 2,
-) -> str:
-    """使用纯ffmpeg实现视频合并，完全不依赖MoviePy"""
     if not video_paths:
         logger.error("没有输入视频文件")
         return None
@@ -131,8 +106,8 @@ def combine_videos_ffmpeg(
         
         # 设置视频分辨率
         aspect = VideoAspect(video_aspect)
-        video_width, video_height = aspect.to_resolution()
-        logger.info(f"目标视频分辨率: {video_width}x{video_height}")
+        target_width, target_height = aspect.to_resolution()
+        logger.info(f"目标视频分辨率: {target_width}x{target_height}")
         
         # 预处理并裁剪每个视频
         processed_segments = []
@@ -146,144 +121,173 @@ def combine_videos_ffmpeg(
                 
                 logger.info(f"处理视频 {idx+1}/{len(video_paths)}: {os.path.basename(video_path)}")
                 
-                # 获取视频信息
-                info_cmd = [
-                    "ffprobe", 
-                    "-v", "error", 
-                    "-select_streams", "v:0", 
-                    "-show_entries", "stream=width,height,r_frame_rate,duration,codec_name", 
-                    "-of", "json", 
-                    video_path
-                ]
+                # 使用VideoMetadataExtractor获取视频元数据
+                metadata = VideoMetadataExtractor.get_video_metadata(video_path)
                 
-                info_result = subprocess.run(info_cmd, capture_output=True, text=True)
-                
-                if info_result.returncode != 0:
-                    logger.error(f"获取视频信息失败: {info_result.stderr}")
+                if not metadata or metadata["width"] == 0 or metadata["height"] == 0:
+                    logger.error(f"无法获取视频元数据: {video_path}")
                     continue
-                    
+                
+                # 提取关键信息
+                width = metadata["width"]
+                height = metadata["height"]
+                rotation = metadata["rotation"]
+                codec = metadata["codec"]
+                
+                logger.info(f"视频信息: 宽={width}, 高={height}, 编码={codec}, 旋转={rotation}°")
+                
+                # 确定视频帧率
+                fps = 30  # 默认帧率
+                
                 try:
-                    video_info = json.loads(info_result.stdout)
-                    stream = video_info.get("streams", [{}])[0]
+                    # 获取帧率信息
+                    fps_cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate", "-of", "default=noprint_wrappers=1:nokey=1", video_path]
+                    fps_output = subprocess.check_output(fps_cmd, universal_newlines=True).strip()
                     
-                    # 获取视频宽高
-                    v_width = int(stream.get("width", 0))
-                    v_height = int(stream.get("height", 0))
-                    
-                    # 获取帧率
-                    fps_str = stream.get("r_frame_rate", "30/1")
-                    fps_parts = fps_str.split('/')
-                    fps = float(fps_parts[0]) / float(fps_parts[1]) if len(fps_parts) == 2 else 30
-                    
-                    # 获取视频编码
-                    codec = stream.get("codec_name", "")
-                    
-                    # 获取视频时长
-                    v_duration = float(stream.get("duration", 0))
-                    if v_duration <= 0:
-                        # 如果流中没有时长，尝试从格式信息获取
-                        format_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", video_path]
-                        format_result = subprocess.run(format_cmd, capture_output=True, text=True)
-                        try:
-                            v_duration = float(format_result.stdout.strip())
-                        except:
-                            # 如果还是无法获取，则计算帧数/帧率
-                            frames_cmd = ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", video_path]
-                            frames_result = subprocess.run(frames_cmd, capture_output=True, text=True)
-                            try:
-                                frame_count_str = frames_result.stdout.strip()
-                                # 解析帧数，需要处理可能存在的逗号
-                                frame_count = int(frame_count_str.replace(',', ''))
-                                v_duration = frame_count / fps
-                            except:
-                                logger.warning(f"无法计算视频时长，使用默认值10秒")
-                                v_duration = 10.0
-                    
-                    logger.info(f"视频信息: {v_width}x{v_height}, {fps:.2f}fps, {v_duration:.2f}秒, 编码: {codec}")
-                    
-                    # 注意：由于我们在预处理阶段已经处理了视频旋转，这里不再需要获取或处理旋转信息
-                    
-                    # 判断视频方向
-                    is_portrait = v_height > v_width
-                    
-                    # 确定每个片段的时长
-                    clip_duration = min(max_clip_duration, v_duration)
-                    
-                    # 如果是顺序模式，只取一个片段
-                    if video_concat_mode == VideoConcatMode.sequential:
-                        start_times = [0]
-                    else:
-                        # 如果是随机模式，尝试取多个片段
-                        start_times = []
-                        if v_duration > max_clip_duration:
-                            # 计算可以取多少个不重叠的片段
-                            num_clips = min(3, int(v_duration / max_clip_duration))
-                            for i in range(num_clips):
-                                start_time = i * max_clip_duration
-                                if start_time + max_clip_duration <= v_duration:
-                                    start_times.append(start_time)
-                        else:
-                            start_times = [0]
-                    
-                    for start_time in start_times:
-                        segment_filename = f"segment_{segment_index:03d}.mp4"
-                        segment_path = os.path.join(temp_dir, segment_filename)
-                        segment_index += 1
-                        
-                        # 计算片段时长
-                        segment_duration = min(max_clip_duration, v_duration - start_time)
-                        
-                        # 根据目标分辨率设置缩放参数
-                        # 比较视频方向与目标方向，确定缩放方式
-                        if (is_portrait and aspect == VideoAspect.portrait) or (not is_portrait and aspect == VideoAspect.landscape):
-                            # 方向一致，保持比例缩放
-                            scale_filter = f"scale={video_width}:{video_height}:force_original_aspect_ratio=1,crop={video_width}:{video_height}"
-                        elif is_portrait and aspect == VideoAspect.landscape:
-                            # 竖屏视频输出为横屏，裁剪中间区域
-                            scale_filter = f"scale={video_height}:{video_width}:force_original_aspect_ratio=1,crop={video_width}:{video_height}"
-                        else:
-                            # 横屏视频输出为竖屏，裁剪中间区域
-                            scale_filter = f"scale={video_height}:{video_width}:force_original_aspect_ratio=1,crop={video_width}:{video_height}"
-                            
-                        # 判断视频尺寸是否合适
-                        if v_width < video_width or v_height < video_height:
-                            logger.warning(f"视频尺寸({v_width}x{v_height})小于目标尺寸({video_width}x{video_height})，使用填充模式")
-                            # 使用填充而非裁剪
-                            scale_filter = f"scale='min({video_width},iw)':'min({video_height},ih)':force_original_aspect_ratio=1,pad={video_width}:{video_height}:(ow-iw)/2:(oh-ih)/2:color=black"
-                        
-                        # 构造安全的片段命令
-                        segment_cmd = [
-                            "ffmpeg", "-y",
-                            "-ss", str(start_time),
-                            "-i", video_path,
-                            "-t", str(segment_duration),
-                            "-vf", f"{scale_filter}",
-                            "-c:v", "libx264",
-                            "-preset", "fast",
-                            "-crf", "23",
-                            "-c:a", "aac",
-                            "-b:a", "128k",
-                            "-pix_fmt", "yuv420p",
-                            segment_path
-                        ]
-                        
-                        # 执行命令
-                        try:
-                            subprocess.run(segment_cmd, check=True, capture_output=True)
-                        except subprocess.CalledProcessError as e:
-                            logger.error(f"处理视频片段失败: {e.stderr.decode('utf-8', errors='replace') if e.stderr else ''}")
-                            continue
-                        
-                        if os.path.exists(segment_path) and os.path.getsize(segment_path) > 0:
-                            segment_files.append(segment_path)
-                            logger.info(f"创建视频片段: {segment_path}, 时长: {segment_duration:.2f}秒")
-                        else:
-                            logger.error(f"创建视频片段失败: {segment_path}")
+                    if fps_output:
+                        fps_parts = fps_output.split('/')
+                        if len(fps_parts) == 2 and int(fps_parts[1]) != 0:
+                            fps = float(fps_parts[0]) / float(fps_parts[1])
+                        elif len(fps_parts) == 1:
+                            fps = float(fps_parts[0])
                 except Exception as e:
-                    logger.error(f"处理视频失败: {str(e)}")
-                    continue
+                    logger.warning(f"获取视频帧率失败，使用默认值30fps: {str(e)}")
+                
+                logger.info(f"视频帧率: {fps}fps")
+                
+                # 计算旋转后的有效尺寸
+                effective_width, effective_height = width, height
+                if rotation in [90, 270, -90]:
+                    effective_width, effective_height = height, width
+                
+                # 获取视频时长
+                v_duration = 0
+                if "duration" in metadata:
+                    v_duration = float(metadata["duration"])
+                else:
+                    # 如果元数据中没有时长，尝试获取
+                    try:
+                        duration_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", video_path]
+                        duration_output = subprocess.check_output(duration_cmd, universal_newlines=True).strip()
+                        if duration_output:
+                            v_duration = float(duration_output)
+                    except Exception as e:
+                        logger.warning(f"获取视频时长失败: {str(e)}")
+                        v_duration = 10.0  # 设置一个默认值
+                
+                # 判断视频方向
+                is_portrait = effective_height > effective_width
+                
+                # 确定每个片段的时长
+                clip_duration = min(max_clip_duration, v_duration)
+                
+                # 如果是顺序模式，只取一个片段
+                if video_concat_mode == VideoConcatMode.sequential:
+                    start_times = [0]
+                else:
+                    # 如果是随机模式，尝试取多个片段
+                    start_times = []
+                    if v_duration > max_clip_duration:
+                        # 计算可以取多少个不重叠的片段
+                        num_clips = min(3, int(v_duration / max_clip_duration))
+                        for i in range(num_clips):
+                            start_time = i * max_clip_duration
+                            if start_time + max_clip_duration <= v_duration:
+                                start_times.append(start_time)
+                    else:
+                        start_times = [0]
+                
+                for start_time in start_times:
+                    segment_filename = f"segment_{segment_index:03d}.mp4"
+                    segment_path = os.path.join(temp_dir, segment_filename)
+                    segment_index += 1
+                    
+                    # 计算片段时长
+                    segment_duration = min(max_clip_duration, v_duration - start_time)
+                    
+                    # 应用旋转和缩放滤镜
+                    filters = []
+                    
+                    # 1. 添加旋转滤镜(如果需要)
+                    if rotation != 0:
+                        if rotation == 90:
+                            filters.append("transpose=1")  # 顺时针旋转90度
+                        elif rotation == 180:
+                            filters.append("transpose=2,transpose=2")  # 旋转180度
+                        elif rotation == 270 or rotation == -90:
+                            filters.append("transpose=2")  # 逆时针旋转90度
+                    
+                    # 2. 使用优化后的缩放和裁剪/填充滤镜
+                    try:
+                        # 考虑旋转后的尺寸
+                        scale_crop_filter, _ = VideoPreprocessor.get_optimal_scale_mode(
+                            effective_width, effective_height, target_width, target_height
+                        )
+                        filters.append(scale_crop_filter.lstrip(","))
+                    except Exception as e:
+                        logger.error(f"获取缩放模式失败: {str(e)}")
+                        # 使用安全默认值
+                        filters.append(f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:color=black")
+                    
+                    # 3. 添加像素格式确保兼容性
+                    filters.append("format=yuv420p")
+                    
+                    # 组合所有滤镜
+                    vf_filter = ",".join(filters)
+                    
+                    # 构造截取片段命令
+                    segment_cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", str(start_time),
+                        "-i", video_path,
+                        "-t", str(segment_duration),
+                        "-vf", vf_filter,
+                        "-c:v", "libx264",
+                        "-preset", "fast",
+                        "-crf", "23",
+                        "-c:a", "aac",
+                        "-b:a", "128k",
+                        "-pix_fmt", "yuv420p",
+                        segment_path
+                    ]
+                    
+                    logger.info(f"片段处理命令: {' '.join(segment_cmd)}")
+                    
+                    # 执行命令
+                    try:
+                        subprocess.run(segment_cmd, check=True, capture_output=True)
+                    except subprocess.CalledProcessError as e:
+                        error_msg = e.stderr.decode('utf-8', errors='replace') if e.stderr else ''
+                        logger.error(f"处理视频片段失败: {error_msg}")
+                        
+                        # 尝试使用备用简化命令
+                        if "Invalid too big or non positive size" in error_msg or "Error initializing filter" in error_msg:
+                            logger.warning("使用备用简化命令处理视频片段")
+                            backup_cmd = [
+                                "ffmpeg", "-y",
+                                "-ss", str(start_time),
+                                "-i", video_path,
+                                "-t", str(segment_duration),
+                                "-vf", "scale=w='min(iw,1920)':h='min(ih,1920)':force_original_aspect_ratio=1,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p",
+                                "-c:v", "libx264",
+                                "-preset", "ultrafast", # 使用更快的预设
+                                "-crf", "28", # 降低质量要求确保成功
+                                segment_path
+                            ]
+                            
+                            try:
+                                subprocess.run(backup_cmd, check=True, capture_output=True)
+                            except subprocess.CalledProcessError as e2:
+                                logger.error(f"备用命令也失败: {e2.stderr.decode('utf-8', errors='replace') if e2.stderr else ''}")
+                                continue
+                    
+                    if os.path.exists(segment_path) and os.path.getsize(segment_path) > 0:
+                        segment_files.append(segment_path)
+                        logger.info(f"创建视频片段: {segment_path}, 时长: {segment_duration:.2f}秒")
+                    else:
+                        logger.error(f"创建视频片段失败: {segment_path}")
             except Exception as e:
-                logger.error(f"处理视频{video_path}时发生错误: {str(e)}")
+                logger.error(f"处理视频失败: {str(e)}")
                 continue
         
         # 如果没有有效片段，返回失败
@@ -347,40 +351,12 @@ def combine_videos_ffmpeg(
     except Exception as e:
         logger.error(f"视频合成过程中发生错误: {str(e)}")
         return None
-    finally:
+    # finally:
         # 清理临时文件
-        try:
-            shutil.rmtree(temp_dir)
-        except Exception as e:
-            logger.warning(f"清理临时目录失败: {str(e)}")
-
-
-# 删除原有的VideoMetadataHandler类，使用新的VideoMetadataExtractor类
-# 为了向后兼容，保留一个空的VideoMetadataHandler类，继承自VideoMetadataExtractor
-class VideoMetadataHandler(VideoMetadataExtractor):
-    """向后兼容的VideoMetadataHandler类，实际使用VideoMetadataExtractor的功能"""
-    pass
-
-
-def create_fallback_video(combined_video_path: str, audio_file: str, duration: float = 24.0) -> str:
-    """创建一个静态视频作为失败时的备选方案"""
-    try:
-        # 创建黑色背景视频
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "lavfi",
-            "-i", f"color=c=black:s=1080x1920:d={duration}",
-            "-i", audio_file,
-            "-c:v", "libx264",
-            "-c:a", "aac",
-            "-shortest",
-            combined_video_path
-        ]
-        subprocess.run(cmd, check=True)
-        return combined_video_path
-    except Exception as e:
-        logger.error(f"创建备选视频失败: {str(e)}")
-        return None
+        # try:
+        #     shutil.rmtree(temp_dir)
+        # except Exception as e:
+        #     logger.warning(f"清理临时目录失败: {str(e)}")
 
 
 def generate_video(
@@ -403,23 +379,6 @@ def generate_video(
     Returns:
         生成的视频文件路径或None
     """
-    return generate_video_ffmpeg(
-        video_path=video_path,
-        audio_path=audio_path,
-        subtitle_path=subtitle_path,
-        output_file=output_file,
-        params=params
-    )
-
-
-def generate_video_ffmpeg(
-    video_path: str,
-    audio_path: str,
-    subtitle_path: str,
-    output_file: str,
-    params: VideoParams,
-):
-    """使用纯ffmpeg实现视频生成，完全不依赖MoviePy"""
     try:
         logger.info("使用ffmpeg生成视频")
         temp_dir = os.path.dirname(output_file)
@@ -876,294 +835,12 @@ def generate_video_ffmpeg(
     except Exception as e:
         logger.error(f"视频生成过程中出错: {str(e)}")
         return None
-    # finally:
-    #     # 清理临时文件
-    #     try:
-    #         if 'temp_dir' in locals() and os.path.exists(temp_dir):
-    #             logger.error(f"清理临时文件: {temp_dir}")
-    #             shutil.rmtree(temp_dir)
-    #     except Exception as e:
-    #         logger.error(f"清理临时文件失败: {str(e)}")
-
-
-
-# 保留preprocess_video名称，使用ffmpeg实现
-def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
-    """
-    使用ffmpeg处理视频和图片素材
-    """
-    # 调用新模块的实现
-    return VideoPreprocessor.preprocess_video(materials, clip_duration)
-
-def test_rotation_detection(video_path: str):
-    """测试旋转检测函数的各种方法"""
-    try:
-        logger.info(f"测试视频旋转检测: {video_path}")
-        
-        # 使用常规方法
-        rotation = get_video_rotation(video_path)
-        logger.info(f"检测到的旋转角度: {rotation}°")
-        
-        # 使用mediainfo（如果可用）
-        try:
-            mediainfo_cmd = ["mediainfo", "--Output=JSON", video_path]
-            mediainfo_result = subprocess.run(mediainfo_cmd, capture_output=True, encoding='utf-8', errors='replace')
-            if mediainfo_result.returncode == 0:
-                logger.info("Mediainfo 可用")
-                mediainfo_data = json.loads(mediainfo_result.stdout)
-                for track in mediainfo_data.get("media", {}).get("track", []):
-                    if track.get("@type") == "Video" and "Rotation" in track:
-                        rotation = int(float(track["Rotation"]))
-                        logger.info(f"Mediainfo 旋转值: {rotation}°")
-            else:
-                logger.info("Mediainfo 不可用")
-        except Exception as e:
-            logger.info(f"Mediainfo 测试失败: {str(e)}")
-        
-        # 使用ffmpeg
-        try:
-            cmd = [
-                "ffmpeg",
-                "-i", video_path,
-                "-hide_banner"
-            ]
-            result = subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace')
-            if result.returncode != 0 and "rotation" in result.stderr.lower():
-                logger.info("发现旋转信息在ffmpeg输出中")
-                # 尝试提取旋转信息
-                rotation_patterns = [r'rotate\s*:\s*(\d+)', r'rotation\s*:\s*(\d+)']
-                for pattern in rotation_patterns:
-                    matches = re.search(pattern, result.stderr, re.IGNORECASE)
-                    if matches:
-                        rotation = int(matches.group(1))
-                        logger.info(f"FFmpeg 旋转值: {rotation}°")
-                        break
-        except Exception as e:
-            logger.info(f"FFmpeg 测试失败: {str(e)}")
-            
-        # 获取视频详细信息
-        try:
-            info_cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", 
-                       "-show_entries", "stream=width,height,codec_name,display_aspect_ratio", 
-                       "-of", "json", video_path]
-            info_result = subprocess.run(info_cmd, capture_output=True, text=True)
-            
-            if info_result.returncode == 0:
-                video_info = json.loads(info_result.stdout)
-                if "streams" in video_info and video_info["streams"]:
-                    stream = video_info["streams"][0]
-                    width = int(stream.get("width", 0))
-                    height = int(stream.get("height", 0))
-                    codec = stream.get("codec_name", "").lower()
-                    aspect_ratio = stream.get("display_aspect_ratio", "")
-                    
-                    logger.info(f"视频信息 - 宽: {width}, 高: {height}, 编码: {codec}, 显示宽高比: {aspect_ratio}")
-                    logger.info(f"视频方向: {'竖屏' if height > width else '横屏'}")
-                    
-                    # 计算实际宽高比
-                    if height > 0:
-                        actual_ratio = width / height
-                        logger.info(f"实际宽高比: {actual_ratio:.4f}")
-                        
-                        # 判断是否接近16:9
-                        if 1.7 < actual_ratio < 1.8:
-                            logger.info("宽高比接近16:9")
-                        # 判断是否接近9:16
-                        elif 0.5 < actual_ratio < 0.6:
-                            logger.info("宽高比接近9:16")
-        except Exception as e:
-            logger.info(f"获取视频信息失败: {str(e)}")
-        
-        # 总结
-        logger.info(f"最终旋转角度检测: {get_video_rotation(video_path)}°")
-        return get_video_rotation(video_path)
-    except Exception as e:
-        logger.error(f"测试失败: {str(e)}")
-        return 0
-
-
-class EncoderConfig:
-    """编码器配置类"""
-    @staticmethod
-    def get_optimal_bitrate(width: int, height: int, is_4k: bool = False) -> int:
-        """计算最优码率（kbps）"""
-        pixel_count = width * height
-        
-        # 超高清视频 (4K及以上)
-        if is_4k:
-            base_bitrate = 30000  # 30Mbps基准
-        # 高清视频 (1080p-2K)
-        elif pixel_count >= 1920 * 1080:
-            base_bitrate = 15000  # 15Mbps基准
-        # 标清视频
-        else:
-            base_bitrate = 8000   # 8Mbps基准
-            
-        # 根据像素数精确调整码率
-        adjusted_bitrate = int((pixel_count / (1920 * 1080)) * base_bitrate)
-        
-        # 设置合理的下限和上限
-        min_bitrate = 6000   # 最低保证6Mbps
-        max_bitrate = 40000  # 最高不超过40Mbps
-        
-        # 确保码率在合理范围内
-        return max(min_bitrate, min(adjusted_bitrate, max_bitrate))
-    
-    @staticmethod
-    def get_encoder_params(hw_accel: str, width: int, height: int) -> dict:
-        """获取编码器参数"""
-        is_4k = width * height >= 3840 * 2160
-        bitrate = EncoderConfig.get_optimal_bitrate(width, height, is_4k)
-        
-        # 基础参数
-        params = {
-            "bitrate": bitrate,
-            "maxrate": int(bitrate * 1.5),
-            "bufsize": int(bitrate * 3),  # 增大缓冲区
-            "refs": 6 if is_4k else 5,    # 增加参考帧数量
-            "g": 30,  # GOP大小
-        }
-        
-        # 根据不同硬件加速器优化参数
-        if hw_accel == "h264_nvenc":
-            params.update({
-                "preset": "p7",    # 最高质量预设
-                "tune": "hq",      # 高质量调优
-                "rc": "vbr",       # 使用可变码率模式
-                "cq": 15,          # 降低质量参数以提高画质
-                "qmin": 10,        # 最小量化参数
-                "qmax": 25,        # 最大量化参数
-                "profile:v": "high",
-                # 完全移除level参数，让NVENC自动选择合适的level
-                "spatial-aq": "1", # 空间自适应量化
-                "temporal-aq": "1", # 时间自适应量化
-                "rc-lookahead": "32", # 前瞻帧数
-                "surfaces": "32"    # 表面缓冲区
-            })
-        elif hw_accel == "h264_qsv":
-            params.update({
-                "preset": "veryslow", # 最慢压缩 = 最高质量
-                "look_ahead": "1",
-                "global_quality": 15, # 高质量参数
-                "profile:v": "high"
-                # 移除level参数
-            })
-        elif hw_accel == "h264_amf":
-            params.update({
-                "quality": "quality",
-                "profile:v": "high",
-                # 移除level参数
-                "refs": 6 if is_4k else 5,  # 增加参考帧
-                "preanalysis": "1",
-                "vbaq": "1",  # 启用方差基础自适应量化
-                "enforce_hrd": "1"
-                # 移除可能引起问题的参数
-            })
-        else:  # libx264软件编码
-            params.update({
-                "preset": "slow",  # 慢速预设，提高质量
-                "crf": "18",       # 高质量CRF值
-                "profile:v": "high",
-                # 移除level参数
-                "refs": 5,         # 参考帧数量
-                "psy": "1",        # 启用心理视觉优化
-                "psy-rd": "1.0:0.05"  # 心理视觉优化率失真
-            })
-        
-        # 为4K视频添加额外参数
-        if is_4k:
-            # 增加4K视频的颜色属性和质量设置
-            extra_params = {
-                "pix_fmt": "yuv420p10le" if hw_accel == "libx264" else "yuv420p", # 10-bit色深(仅软件编码)
-                "colorspace": "bt709",     # 标准色彩空间
-                "color_primaries": "bt709", # 色彩原色
-                "color_trc": "bt709",       # 色彩传输特性
-                "movflags": "+faststart"    # 文件元数据前置，便于快速播放
-            }
-            params.update(extra_params)
-        
-        return params
 
 
 if __name__ == "__main__":
-    # 测试旋转检测
-    import sys
-    if len(sys.argv) > 1:
-        test_file = sys.argv[1]
-        print(f"测试文件: {test_file}")
-        
-        # 详细输出测试文件的所有信息
-        print("\n===== 视频详细信息 =====")
-        try:
-            info_cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", 
-                       "-show_entries", "stream=width,height,codec_name,display_aspect_ratio", 
-                       "-of", "json", test_file]
-            info_result = subprocess.run(info_cmd, capture_output=True, text=True)
-            
-            if info_result.returncode == 0:
-                video_info = json.loads(info_result.stdout)
-                if "streams" in video_info and video_info["streams"]:
-                    stream = video_info["streams"][0]
-                    width = int(stream.get("width", 0))
-                    height = int(stream.get("height", 0))
-                    codec = stream.get("codec_name", "").lower()
-                    aspect_ratio = stream.get("display_aspect_ratio", "")
-                    
-                    print(f"视频尺寸: {width}x{height}")
-                    print(f"编码格式: {codec}")
-                    print(f"显示宽高比: {aspect_ratio}")
-                    print(f"视频方向: {'竖屏' if height > width else '横屏'}")
-                    
-                    if height > 0:
-                        actual_ratio = width / height
-                        print(f"实际宽高比: {actual_ratio:.4f}")
-                        
-                        if 1.7 < actual_ratio < 1.8:
-                            print("宽高比接近16:9")
-                        elif 0.5 < actual_ratio < 0.6:
-                            print("宽高比接近9:16")
-        except Exception as e:
-            print(f"获取视频信息失败: {str(e)}")
-            
-        print("\n===== 旋转检测 =====")
-        rotation = test_rotation_detection(test_file)
-        print(f"检测到的旋转角度: {rotation}")
-        
-        print("\n===== 编码检测 =====")
-        codec = get_video_codec(test_file)
-        print(f"检测到的编码: {codec}")
-        
-        # 特殊情况判断
-        print("\n===== 特殊情况判断 =====")
-        is_portrait_orientation = height > width
-        is_4k = (width >= 3840 or height >= 3840)
-        is_hevc = codec.lower() == 'hevc'
-        
-        print(f"是否竖屏: {is_portrait_orientation}")
-        print(f"是否4K视频: {is_4k}")
-        print(f"是否HEVC编码: {is_hevc}")
-        print(f"是否4K HEVC视频: {is_4k and is_hevc}")
-        
-        if is_4k and is_hevc:
-            print("这是4K HEVC视频，需要特殊处理")
-            
-            aspect_ratio = width / height if height > 0 else 0
-            if 1.7 < aspect_ratio < 1.8 and rotation == 0:
-                print("这是16:9的横屏4K HEVC视频，不需要旋转")
-            elif rotation != 0:
-                print(f"这是有旋转信息的4K HEVC视频，旋转角度: {rotation}°")
-        
-        if not is_portrait_orientation and rotation == 0:
-            print("这是横屏视频，无旋转信息")
-            aspect_ratio = width / height if height > 0 else 0
-            if 1.7 < aspect_ratio < 1.8:
-                print("这是标准16:9横屏视频")
-        
-        sys.exit(0)
-        
     # 原有的测试代码
     m = MaterialInfo()
     m.url = "/Users/harry/Downloads/IMG_2915.JPG"
     m.provider = "local"
-    materials = preprocess_video([m], clip_duration=4)
+    materials = VideoPreprocessor.preprocess_video([m], clip_duration=4)
     print(materials)

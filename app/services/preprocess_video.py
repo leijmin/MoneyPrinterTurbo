@@ -268,19 +268,19 @@ class VideoPreprocessor:
                     else:
                         logger.info(f"无需缩放: 当前尺寸: {effective_width}x{effective_height} 接近目标尺寸")
                     
-                    # 5. 特殊情况：4K HEVC视频的处理
-                    is_special_hevc_landscape = False
-                    if is_4k and is_hevc and is_standard_landscape and width > height:
-                        logger.info("⚠️ 检测到标准横屏4K HEVC视频，尊重其原始方向")
-                        is_special_hevc_landscape = True
+                    # 5. 特殊情况：4K视频的处理（不仅限于HEVC）
+                    is_special_landscape = False
+                    if is_4k and is_standard_landscape and width > height:
+                        logger.info("⚠️ 检测到标准横屏4K视频，尊重其原始方向")
+                        is_special_landscape = True
                         rotation = 0
                         needs_rotation = False
                         if needs_scaling:
                             needs_processing = True
                     
-                    # 6. 特殊处理：标准横屏且非4K HEVC的视频可能是手机拍摄的竖屏视频
-                    if not is_portrait and not is_special_hevc_landscape:
-                        if 1.7 < width/height < 1.8 and not is_4k and not is_hevc:  # 接近16:9
+                    # 6. 特殊处理：标准横屏且非4K视频可能是手机拍摄的竖屏视频
+                    if not is_portrait and not is_special_landscape:
+                        if 1.7 < width/height < 1.8 and not is_4k:  # 注意：这里不需要检查is_hevc
                             logger.info("检测到可能是竖屏视频被记录为横屏，添加90度旋转")
                             rotation = 90
                             needs_rotation = True
