@@ -1562,13 +1562,14 @@ def generate_video_ffmpeg(
     except Exception as e:
         logger.error(f"视频生成过程中出错: {str(e)}")
         return None
-    finally:
-        # 清理临时文件
-        try:
-            if 'temp_dir' in locals() and os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-        except Exception as e:
-            logger.error(f"清理临时文件失败: {str(e)}")
+    # finally:
+    #     # 清理临时文件
+    #     try:
+    #         if 'temp_dir' in locals() and os.path.exists(temp_dir):
+    #             logger.error(f"清理临时文件: {temp_dir}")
+    #             shutil.rmtree(temp_dir)
+    #     except Exception as e:
+    #         logger.error(f"清理临时文件失败: {str(e)}")
 
 
 def preprocess_video_ffmpeg(materials: List[MaterialInfo], clip_duration=4):
