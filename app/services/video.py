@@ -245,7 +245,13 @@ def combine_videos_ffmpeg(
                             # 横屏视频输出为竖屏，裁剪中间区域
                             scale_filter = f"scale={video_height}:{video_width}:force_original_aspect_ratio=1,crop={video_width}:{video_height}"
                             
-                        # 构造截取片段命令
+                        # 判断视频尺寸是否合适
+                        if v_width < video_width or v_height < video_height:
+                            logger.warning(f"视频尺寸({v_width}x{v_height})小于目标尺寸({video_width}x{video_height})，使用填充模式")
+                            # 使用填充而非裁剪
+                            scale_filter = f"scale='min({video_width},iw)':'min({video_height},ih)':force_original_aspect_ratio=1,pad={video_width}:{video_height}:(ow-iw)/2:(oh-ih)/2:color=black"
+                        
+                        # 构造安全的片段命令
                         segment_cmd = [
                             "ffmpeg", "-y",
                             "-ss", str(start_time),
