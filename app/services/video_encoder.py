@@ -1,3 +1,11 @@
+import subprocess
+import os
+import threading
+import shutil
+import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 class EncoderConfig:
     """编码器配置类"""
@@ -43,20 +51,38 @@ class EncoderConfig:
         
         # 根据不同硬件加速器优化参数
         if hw_accel == "h264_nvenc":
-            params.update({
-                "preset": "p7",    # 最高质量预设
-                "tune": "hq",      # 高质量调优
-                "rc": "vbr",       # 使用可变码率模式
-                "cq": 15,          # 降低质量参数以提高画质
-                "qmin": 10,        # 最小量化参数
-                "qmax": 25,        # 最大量化参数
-                "profile:v": "high",
-                # 完全移除level参数，让NVENC自动选择合适的level
-                "spatial-aq": "1", # 空间自适应量化
-                "temporal-aq": "1", # 时间自适应量化
-                "rc-lookahead": "32", # 前瞻帧数
-                "surfaces": "32"    # 表面缓冲区
-            })
+            # 根据英伟达GPU代际优化参数
+            try:
+                # 获取GPU信息
+                gpu_info_cmd = ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]
+                gpu_name = subprocess.check_output(gpu_info_cmd, universal_newlines=True).strip()
+                
+                # 针对RTX 30/40系列或更高级GPU优化
+                if any(x in gpu_name.upper() for x in ["RTX 30", "RTX 40", "A100", "A6000"]):
+                    params.update({
+                        "preset": "p7",     # 最高质量预设
+                        "tune": "hq",       # 高质量调优
+                        "multipass": "fullres",  # 两遍编码模式
+                        "spatial-aq": "1",  # 空间自适应量化
+                        "temporal-aq": "1", # 时间自适应量化
+                        "aq-strength": "15", # 高自适应量化强度
+                        "rc-lookahead": "40", # 增加前瞻帧数
+                        "surfaces": "64",   # 增加表面缓冲区
+                        "gpu": "0",         # 指定GPU索引
+                        "b_ref_mode": "middle" # 使用B帧作为参考
+                    })
+                else:
+                    # 老旧GPU优化
+                    params.update({
+                        "preset": "p6",     # 平衡预设
+                        "rc-lookahead": "24"  # 减少前瞻帧数避免过载
+                    })
+            except Exception:
+                # 默认NVENC配置
+                params.update({
+                    "preset": "p7",
+                    "tune": "hq"
+                })
         elif hw_accel == "h264_qsv":
             params.update({
                 "preset": "veryslow", # 最慢压缩 = 最高质量
@@ -100,4 +126,76 @@ class EncoderConfig:
             params.update(extra_params)
         
         return params
+
+class HardwareAccelerator:
+    """硬件加速检测与配置类"""
+    _ENCODERS_CACHE = None  # 静态缓存
+    
+    @staticmethod
+    def detect_available_encoders(force_refresh=False):
+        """检测系统支持的硬件加速器"""
+        # 使用缓存避免重复检测
+        if HardwareAccelerator._ENCODERS_CACHE is not None and not force_refresh:
+            return HardwareAccelerator._ENCODERS_CACHE
+            
+        # 一次性检查所有编码器
+        encoders = {"nvidia": False, "intel": False, "amd": False}
+        encoder_names = {"nvidia": "h264_nvenc", "intel": "h264_qsv", "amd": "h264_amf"}
+        
+        try:
+            ffmpeg_cmd = ["ffmpeg", "-hide_banner", "-encoders"]
+            output = subprocess.check_output(ffmpeg_cmd, universal_newlines=True)
+            
+            # 检查所有支持的编码器
+            for vendor, encoder in encoder_names.items():
+                if encoder in output:
+                    encoders[vendor] = True
+                    logger.info(f"✅ 检测到{vendor.upper()}硬件加速支持")
+            
+            # 未检测到任何GPU加速器
+            if not any(encoders.values()):
+                logger.info("⚠️ 未检测到GPU加速支持，将使用CPU编码")
+        except Exception as e:
+            logger.warning(f"⚠️ 检测硬件加速器失败: {str(e)}")
+        
+        # 缓存结果
+        HardwareAccelerator._ENCODERS_CACHE = encoders
+        return encoders
+    
+    @staticmethod
+    def get_optimal_encoder(preferred_gpu="nvidia"):
+        """获取最优的编码器"""
+        encoders = HardwareAccelerator.detect_available_encoders()
+        encoder_map = {"nvidia": "h264_nvenc", "intel": "h264_qsv", "amd": "h264_amf"}
+        
+        # 首选用户指定的GPU
+        if preferred_gpu.lower() in encoder_map and encoders[preferred_gpu.lower()]:
+            return encoder_map[preferred_gpu.lower()]
+        
+        # 按优先级选择
+        for vendor in ["nvidia", "intel", "amd"]:
+            if encoders[vendor]:
+                return encoder_map[vendor]
+        
+        # 无GPU支持，使用CPU编码
+        return "libx264"
+    
+    @staticmethod
+    def optimize_input_parameters(encoder, input_path):
+        """为不同的加速器优化输入参数"""
+        params = {
+            "h264_nvenc": ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"],
+            "h264_qsv": ["-hwaccel", "qsv", "-hwaccel_output_format", "qsv"],
+            "h264_amf": ["-hwaccel", "d3d11va"],
+            "libx264": []  # CPU编码不需要特殊参数
+        }
+        
+        # 获取基本参数
+        input_params = params.get(encoder, [])
+        
+        # NVIDIA特殊处理
+        if encoder == "h264_nvenc" and (input_path.lower().endswith((".mp4", ".mov"))):
+            input_params.extend(["-hwaccel_device", "0"])
+        
+        return input_params
 
