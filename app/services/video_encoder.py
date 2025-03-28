@@ -4,6 +4,7 @@ import threading
 import shutil
 import time
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -163,21 +164,230 @@ class HardwareAccelerator:
         return encoders
     
     @staticmethod
-    def get_optimal_encoder(preferred_gpu="nvidia"):
-        """获取最优的编码器"""
+    def test_encoder(encoder):
+        """测试编码器是否实际可用"""
+        test_cmd = [
+            "ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=640x480:rate=30", 
+            "-c:v", encoder, "-frames:v", "1", "-f", "null", "-"
+        ]
+        
+        try:
+            result = subprocess.run(
+                test_cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                check=False
+            )
+            
+            if result.returncode == 0:
+                logger.info(f"✓ 编码器 {encoder} 测试通过")
+                return True
+            
+            # 检查错误消息
+            if "No such filter" in result.stderr or "Unknown encoder" in result.stderr:
+                logger.warning(f"编码器 {encoder} 虽然被ffmpeg列出，但实际不可用")
+                return False
+            
+            # 检查是否需要特殊参数
+            if "Invalid argument" in result.stderr and "nvenc" in encoder:
+                logger.warning(f"编码器 {encoder} 需要特殊配置才能使用")
+                # 这里暂时返回True，因为我们会通过sanitize_gpu_params进一步优化
+                return True
+            
+            logger.warning(f"编码器 {encoder} 测试失败: {result.stderr[:100]}...")
+            return False
+        except Exception as e:
+            logger.warning(f"测试编码器 {encoder} 时出错: {str(e)}")
+            return False
+    
+    @staticmethod
+    def diagnose_gpu_issues():
+        """诊断GPU相关问题并提供详细报告"""
+        diagnostic_report = {
+            "nvidia_driver": False,
+            "nvidia_gpu_found": False,
+            "ffmpeg_nvenc_support": False,
+            "nvenc_functional": False,
+            "recommended_encoder": "libx264",
+            "issues": [],
+            "solutions": []
+        }
+        
+        # 1. 检查NVIDIA驱动
+        try:
+            smi_result = subprocess.run(
+                ["nvidia-smi"], 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                check=False
+            )
+            
+            if smi_result.returncode == 0:
+                diagnostic_report["nvidia_driver"] = True
+                diagnostic_report["nvidia_gpu_found"] = True
+                logger.info("✅ NVIDIA驱动正常")
+                
+                # 提取GPU型号
+                gpu_info_cmd = ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]
+                gpu_name = subprocess.check_output(gpu_info_cmd, universal_newlines=True).strip()
+                logger.info(f"检测到GPU: {gpu_name}")
+                
+                # 检查CUDA版本
+                if "CUDA Version:" in smi_result.stdout:
+                    cuda_version = re.search(r"CUDA Version: ([0-9.]+)", smi_result.stdout)
+                    if cuda_version:
+                        logger.info(f"CUDA版本: {cuda_version.group(1)}")
+            else:
+                diagnostic_report["issues"].append("NVIDIA驱动未安装或未正常运行")
+                diagnostic_report["solutions"].append("请安装或更新NVIDIA显卡驱动")
+                logger.warning("❌ NVIDIA驱动未找到或无法运行")
+        except Exception as e:
+            diagnostic_report["issues"].append(f"检查NVIDIA驱动时出错: {str(e)}")
+            logger.warning(f"检查NVIDIA驱动时出错: {str(e)}")
+        
+        # 2. 检查ffmpeg的NVENC支持
+        try:
+            ffmpeg_cmd = ["ffmpeg", "-hide_banner", "-encoders"]
+            output = subprocess.check_output(ffmpeg_cmd, universal_newlines=True)
+            
+            if "h264_nvenc" in output:
+                diagnostic_report["ffmpeg_nvenc_support"] = True
+                logger.info("✅ ffmpeg支持NVENC编码")
+            else:
+                diagnostic_report["issues"].append("ffmpeg不支持NVENC")
+                diagnostic_report["solutions"].append("请使用包含NVENC支持的ffmpeg版本")
+                logger.warning("❌ ffmpeg不支持NVENC")
+        except Exception as e:
+            diagnostic_report["issues"].append(f"检查ffmpeg时出错: {str(e)}")
+            logger.warning(f"检查ffmpeg时出错: {str(e)}")
+        
+        # 3. 测试NVENC功能性
+        if diagnostic_report["nvidia_driver"] and diagnostic_report["ffmpeg_nvenc_support"]:
+            # 测试简单编码
+            test_cmd = [
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=640x480:rate=30", 
+                "-c:v", "h264_nvenc", "-preset", "p1", "-frames:v", "1", 
+                "-f", "null", "-"
+            ]
+            
+            try:
+                result = subprocess.run(
+                    test_cmd, 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                    check=False
+                )
+                
+                if result.returncode == 0:
+                    diagnostic_report["nvenc_functional"] = True
+                    diagnostic_report["recommended_encoder"] = "h264_nvenc"
+                    logger.info("✅ NVENC编码器测试通过")
+                else:
+                    error_msg = result.stderr
+                    logger.warning(f"❌ NVENC编码器测试失败: {error_msg}")
+                    
+                    # 分析错误原因
+                    if "Cannot load nvcuda.dll" in error_msg:
+                        diagnostic_report["issues"].append("无法加载CUDA库")
+                        diagnostic_report["solutions"].append("请安装或更新CUDA")
+                    elif "Generic error in an external library" in error_msg:
+                        diagnostic_report["issues"].append("NVENC外部库错误，可能是驱动与ffmpeg不兼容")
+                        diagnostic_report["solutions"].append("尝试更新NVIDIA驱动到最新版本")
+                    elif "No NVENC capable devices found" in error_msg:
+                        diagnostic_report["issues"].append("未找到支持NVENC的设备")
+                        diagnostic_report["solutions"].append("您的GPU可能不支持NVENC编码")
+                    else:
+                        diagnostic_report["issues"].append(f"NVENC测试失败: {error_msg[:100]}")
+                        diagnostic_report["solutions"].append("尝试使用简化编码参数")
+            except Exception as e:
+                diagnostic_report["issues"].append(f"测试NVENC时出错: {str(e)}")
+                logger.warning(f"测试NVENC时出错: {str(e)}")
+        
+        # 输出诊断总结
+        logger.info("=== GPU诊断报告 ===")
+        logger.info(f"NVIDIA驱动: {'正常' if diagnostic_report['nvidia_driver'] else '不可用'}")
+        logger.info(f"NVIDIA GPU: {'已找到' if diagnostic_report['nvidia_gpu_found'] else '未找到'}")
+        logger.info(f"ffmpeg NVENC支持: {'支持' if diagnostic_report['ffmpeg_nvenc_support'] else '不支持'}")
+        logger.info(f"NVENC功能: {'正常' if diagnostic_report['nvenc_functional'] else '不可用'}")
+        logger.info(f"推荐编码器: {diagnostic_report['recommended_encoder']}")
+        
+        if diagnostic_report["issues"]:
+            logger.info("发现的问题:")
+            for i, issue in enumerate(diagnostic_report["issues"]):
+                logger.info(f"  {i+1}. {issue}")
+            
+            logger.info("建议解决方案:")
+            for i, solution in enumerate(diagnostic_report["solutions"]):
+                logger.info(f"  {i+1}. {solution}")
+        
+        return diagnostic_report
+    
+    @staticmethod
+    def get_optimal_encoder(preferred_gpu="nvidia", force_diagnostic=False):
+        """获取最优的编码器，并确保它实际可用"""
+        # 如果明确要求诊断，执行完整GPU诊断
+        if force_diagnostic:
+            diagnostic = HardwareAccelerator.diagnose_gpu_issues()
+            return diagnostic["recommended_encoder"]
+        
         encoders = HardwareAccelerator.detect_available_encoders()
         encoder_map = {"nvidia": "h264_nvenc", "intel": "h264_qsv", "amd": "h264_amf"}
         
         # 首选用户指定的GPU
         if preferred_gpu.lower() in encoder_map and encoders[preferred_gpu.lower()]:
-            return encoder_map[preferred_gpu.lower()]
+            encoder = encoder_map[preferred_gpu.lower()]
+            
+            # 使用更简单的NVENC测试，避免复杂参数
+            if encoder == "h264_nvenc":
+                # 使用简化参数测试NVENC
+                test_cmd = [
+                    "ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=640x480:rate=30", 
+                    "-c:v", "h264_nvenc", "-preset", "p1", "-frames:v", "1", 
+                    "-f", "null", "-"
+                ]
+                
+                try:
+                    result = subprocess.run(
+                        test_cmd, 
+                        stdout=subprocess.PIPE, 
+                        stderr=subprocess.PIPE,
+                        universal_newlines=True,
+                        check=False
+                    )
+                    
+                    if result.returncode == 0:
+                        logger.info(f"✅ NVENC编码器测试通过（简化参数）")
+                        return encoder
+                    else:
+                        # 输出详细错误信息帮助诊断
+                        logger.warning(f"❌ NVENC编码器测试失败:")
+                        logger.warning(result.stderr[:500])
+                        
+                        # 如果遇到特定错误，尝试执行完整诊断
+                        if "Generic error in an external library" in result.stderr:
+                            logger.warning("检测到NVENC外部库错误，执行完整诊断...")
+                            HardwareAccelerator.diagnose_gpu_issues()
+                except Exception as e:
+                    logger.warning(f"测试NVENC时出错: {str(e)}")
+            else:
+                # 其他GPU编码器的测试
+                if HardwareAccelerator.test_encoder(encoder):
+                    logger.info(f"使用GPU加速器: {encoder}")
+                    return encoder
         
-        # 按优先级选择
+        # 按优先级尝试其他可用GPU
         for vendor in ["nvidia", "intel", "amd"]:
-            if encoders[vendor]:
-                return encoder_map[vendor]
+            if vendor != preferred_gpu.lower() and encoders[vendor]:
+                encoder = encoder_map[vendor]
+                if HardwareAccelerator.test_encoder(encoder):
+                    logger.info(f"使用备选GPU加速器: {encoder}")
+                    return encoder
         
         # 无GPU支持，使用CPU编码
+        logger.info("使用CPU软件编码(libx264)")
         return "libx264"
     
     @staticmethod

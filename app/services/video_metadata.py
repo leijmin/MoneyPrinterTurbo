@@ -30,6 +30,12 @@ class VideoBasicMetadata:
             return getattr(self, key)
         raise KeyError(f"属性 '{key}' 不存在")
     
+    def get(self, key, default=None):
+        """模拟字典的get()方法"""
+        if hasattr(self, key):
+            return getattr(self, key)
+        return default
+    
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'VideoBasicMetadata':
         """从字典创建元数据对象"""
@@ -58,6 +64,41 @@ class VideoBasicMetadata:
             "is_portrait": self.is_portrait,
             "codec": self.codec
         }
+    
+    def to_features(self) -> Dict[str, Any]:
+        """转换为特性字典，用于视频处理"""
+        effective_width, effective_height = self.width, self.height
+        if self.rotation in [90, 270, -90]:
+            effective_width, effective_height = self.height, self.width
+            
+        return {
+            "width": self.width,
+            "height": self.height,
+            "codec": self.codec,
+            "rotation": self.rotation,
+            "effective_width": effective_width,
+            "effective_height": effective_height,
+            "duration": self.duration,
+            "is_4k": self.width * self.height >= 3840 * 2160,
+            "is_hd": self.width >= 1920 or self.height >= 1920,
+            "is_high_quality": self.width * self.height >= 1920 * 1080,
+            "needs_rotation": self.rotation != 0,
+            "is_landscape": self.width > self.height,
+            "is_landscape_after_rotation": effective_width > effective_height,
+            "aspect_ratio": effective_width / effective_height if effective_height else 0
+        }
+
+    def keys(self):
+        """模拟字典的keys()方法"""
+        return self.to_dict().keys()
+    
+    def values(self):
+        """模拟字典的values()方法"""
+        return self.to_dict().values()
+    
+    def items(self):
+        """模拟字典的items()方法"""
+        return self.to_dict().items()
 
 
 @dataclass
@@ -184,35 +225,97 @@ class VideoMetadataExtractor:
         return VideoBasicMetadata.from_dict(metadata_dict)
     
     @staticmethod
-    def get_video_metadata(video_path: str) -> Dict[str, Any]:
-        """获取视频的完整元数据"""
+    def get_video_metadata(video_path: str) -> VideoDetailedMetadata:
+        """获取视频的完整元数据，返回VideoDetailedMetadata对象"""
         logger.info(f"🎬 获取视频完整元数据 | 路径: {video_path}")
         
         # 检查文件是否存在
         if not os.path.exists(video_path):
             logger.error(f"❌ 文件不存在: {video_path}")
-            return {"width": 0, "height": 0, "rotation": 0, "error": "文件不存在", 
-                    "codec": "unknown", "is_portrait": False, "effective_width": 0, 
-                    "effective_height": 0, "aspect_ratio": 0.0, "duration": 0.0}
+            return VideoDetailedMetadata(
+                width=0, height=0, rotation=0, 
+                codec="unknown", effective_width=0, effective_height=0, 
+                aspect_ratio=0.0, duration=0.0
+            )
+        
+        # MOV格式特殊处理 - 确保正确提取旋转信息
+        is_mov_format = video_path.lower().endswith('.mov')
         
         # 尝试从缓存获取
         cached_data = cache_manager.get_metadata(video_path, "detailed")
         if cached_data:
-            return cached_data
-        
-        # 缓存未命中，从媒体信息提取器获取
-        metadata_dict = {}
-        if VideoMetadataExtractor.is_mediainfo_available():
-            logger.info("✅ 使用MediaInfo获取视频元数据")
-            metadata_dict = MediaInfoExtractor.get_detailed_metadata(video_path)
+            metadata = VideoDetailedMetadata.from_dict(cached_data)
         else:
-            logger.info("⚠️ MediaInfo不可用，使用FFprobe获取视频元数据")
-            metadata_dict = FFprobeExtractor.get_detailed_metadata(video_path)
+            # 缓存未命中，从媒体信息提取器获取
+            metadata_dict = {}
+            if VideoMetadataExtractor.is_mediainfo_available():
+                logger.info("✅ 使用MediaInfo获取视频元数据")
+                metadata_dict = MediaInfoExtractor.get_detailed_metadata(video_path)
+            else:
+                logger.info("⚠️ MediaInfo不可用，使用FFprobe获取视频元数据")
+                metadata_dict = FFprobeExtractor.get_detailed_metadata(video_path)
+            
+            # 缓存获取的元数据
+            cache_manager.set_metadata(video_path, "detailed", metadata_dict)
+            
+            # 返回对象实例而不是字典
+            metadata = VideoDetailedMetadata.from_dict(metadata_dict)
         
-        # 缓存获取的元数据
-        cache_manager.set_metadata(video_path, "detailed", metadata_dict)
+        # 对MOV格式进行额外的旋转角度检查
+        if is_mov_format:
+            # 首先检查已有的旋转角度
+            if metadata.rotation == 0:
+                # 尝试不同的元数据提取方式获取旋转信息
+                try:
+                    # 方法1: 检查流标签中的rotate信息
+                    rotation_cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", 
+                                   "-show_entries", "stream_tags=rotate", "-of", "json", video_path]
+                    rotation_output = subprocess.check_output(rotation_cmd, universal_newlines=True)
+                    rotation_data = json.loads(rotation_output)
+                    
+                    if "streams" in rotation_data and rotation_data["streams"] and "tags" in rotation_data["streams"][0]:
+                        tags = rotation_data["streams"][0]["tags"]
+                        if "rotate" in tags:
+                            rotation = int(tags["rotate"])
+                            # 更新元数据中的旋转角度
+                            metadata.rotation = VideoMetadataExtractor.normalize_rotation(rotation)
+                            logger.info(f"从MOV流标签中提取到旋转角度: {rotation}°")
+                            
+                            # 更新有效宽高，考虑旋转因素
+                            if metadata.rotation in [90, 270]:
+                                metadata.effective_width, metadata.effective_height = metadata.height, metadata.width
+                            
+                            # 重新缓存更新后的元数据
+                            cache_manager.set_metadata(video_path, "detailed", metadata)
+                except Exception as e:
+                    logger.warning(f"从MOV标签获取旋转信息时出错: {str(e)}")
+                    
+                # 方法2: 如果第一种方法失败，检查QuickTime元数据
+                if metadata.rotation == 0:
+                    try:
+                        qt_cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", 
+                                 "-show_entries", "stream_side_data=rotation", "-of", "json", video_path]
+                        qt_output = subprocess.check_output(qt_cmd, universal_newlines=True)
+                        qt_data = json.loads(qt_output)
+                        
+                        if "streams" in qt_data and qt_data["streams"] and "side_data_list" in qt_data["streams"][0]:
+                            for side_data in qt_data["streams"][0]["side_data_list"]:
+                                if "rotation" in side_data:
+                                    rotation = float(side_data["rotation"])
+                                    metadata.rotation = VideoMetadataExtractor.normalize_rotation(rotation)
+                                    logger.info(f"从QuickTime元数据中提取到旋转角度: {rotation}°")
+                                    
+                                    # 更新有效宽高
+                                    if metadata.rotation in [90, 270]:
+                                        metadata.effective_width, metadata.effective_height = metadata.height, metadata.width
+                                    
+                                    # 重新缓存更新后的元数据
+                                    cache_manager.set_metadata(video_path, "detailed", metadata)
+                                    break
+                    except Exception as e:
+                        logger.warning(f"从QuickTime元数据获取旋转信息时出错: {str(e)}")
         
-        return metadata_dict
+        return metadata
     
     @staticmethod
     def get_audio_duration(audio_path: str) -> float:

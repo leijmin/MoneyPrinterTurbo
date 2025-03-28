@@ -27,6 +27,7 @@ from app.utils import utils
 from app.services.video_metadata import VideoMetadataExtractor
 from app.services.preprocess_video import VideoPreprocessor
 from app.services.video_encoder import EncoderConfig
+from app.services.video_processing import VideoProcessor
 
 # 预处理视频 给外部调用
 def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
@@ -113,26 +114,70 @@ def combine_videos(
         processed_segments = []
         segment_index = 0
         
+        # 在combine_videos函数的开始部分，预处理MOV格式视频
+        processed_video_paths = []
+
         for idx, video_path in enumerate(video_paths):
             try:
                 if not os.path.exists(video_path):
                     logger.error(f"视频文件不存在: {video_path}")
                     continue
                 
+                # 检查是否需要预处理MOV文件
+                if video_path.lower().endswith('.mov'):
+                    # 创建临时MP4文件
+                    temp_mp4_path = os.path.join(temp_dir, f"preprocess_{idx}_{uuid.uuid4()}.mp4")
+                    
+                    logger.info(f"将MOV格式预处理为MP4: {os.path.basename(video_path)}")
+                    
+                    # 使用FFmpeg直接转换，保持所有流不变，但明确设置旋转元数据为0
+                    preprocess_cmd = [
+                        "ffmpeg", "-y",
+                        "-i", video_path,
+                        "-c:v", "copy",      # 直接复制视频流
+                        "-c:a", "copy",      # 直接复制音频流
+                        "-metadata:s:v", "rotate=0",  # 清除旋转元数据
+                        "-metadata:s:v:0", "rotate=0",
+                        temp_mp4_path
+                    ]
+                    
+                    # 执行命令
+                    subprocess.run(preprocess_cmd, check=True, capture_output=True)
+                    
+                    if os.path.exists(temp_mp4_path) and os.path.getsize(temp_mp4_path) > 0:
+                        # 使用处理后的MP4文件
+                        processed_video_paths.append(temp_mp4_path)
+                        logger.info(f"MOV预处理成功: {temp_mp4_path}")
+                    else:
+                        # 使用原始文件
+                        processed_video_paths.append(video_path)
+                        logger.warning(f"MOV预处理失败，使用原文件: {video_path}")
+                else:
+                    # 非MOV格式直接使用
+                    processed_video_paths.append(video_path)
+            except Exception as e:
+                logger.error(f"预处理视频失败: {str(e)}")
+                processed_video_paths.append(video_path)  # 添加原始文件作为后备
+
+        # 使用处理后的视频路径列表
+        video_paths = processed_video_paths
+        
+        for idx, video_path in enumerate(video_paths):
+            try:
                 logger.info(f"处理视频 {idx+1}/{len(video_paths)}: {os.path.basename(video_path)}")
                 
                 # 使用VideoMetadataExtractor获取视频元数据
                 metadata = VideoMetadataExtractor.get_video_metadata(video_path)
                 
-                if not metadata or metadata["width"] == 0 or metadata["height"] == 0:
+                if not metadata or metadata.width == 0 or metadata.height == 0:
                     logger.error(f"无法获取视频元数据: {video_path}")
                     continue
                 
                 # 提取关键信息
-                width = metadata["width"]
-                height = metadata["height"]
-                rotation = metadata["rotation"]
-                codec = metadata["codec"]
+                width = metadata.width
+                height = metadata.height
+                rotation = metadata.rotation
+                codec = metadata.codec
                 
                 logger.info(f"视频信息: 宽={width}, 高={height}, 编码={codec}, 旋转={rotation}°")
                 
@@ -162,8 +207,8 @@ def combine_videos(
                 
                 # 获取视频时长
                 v_duration = 0
-                if "duration" in metadata:
-                    v_duration = float(metadata["duration"])
+                if hasattr(metadata, 'duration') and metadata.duration > 0:
+                    v_duration = metadata.duration
                 else:
                     # 如果元数据中没有时长，尝试获取
                     try:
@@ -208,8 +253,14 @@ def combine_videos(
                     # 应用旋转和缩放滤镜
                     filters = []
                     
+                    # 检查是否为MOV格式
+                    is_mov_format = video_path.lower().endswith('.mov')
+                    
                     # 1. 添加旋转滤镜(如果需要)
                     if rotation != 0:
+                        if is_mov_format:
+                            logger.info(f"处理MOV格式视频片段: {os.path.basename(video_path)}, 旋转角度={rotation}°")
+                        
                         if rotation == 90:
                             filters.append("transpose=1")  # 顺时针旋转90度
                         elif rotation == 180:
@@ -247,9 +298,17 @@ def combine_videos(
                         "-crf", "23",
                         "-c:a", "aac",
                         "-b:a", "128k",
-                        "-pix_fmt", "yuv420p",
-                        segment_path
+                        "-pix_fmt", "yuv420p"
                     ]
+                    
+                    # 关键改动: 对MOV格式添加特殊处理，确保清除旋转元数据
+                    if is_mov_format:
+                        segment_cmd.extend([
+                            "-metadata:s:v", "rotate=0",  # 明确移除旋转元数据
+                            "-metadata:s:v:0", "rotate=0"  # 确保所有视频流的旋转元数据都被清除
+                        ])
+                    
+                    segment_cmd.append(segment_path)
                     
                     logger.info(f"片段处理命令: {' '.join(segment_cmd)}")
                     
@@ -383,6 +442,9 @@ def generate_video(
         logger.info("使用ffmpeg生成视频")
         temp_dir = os.path.dirname(output_file)
         
+        # 创建中间处理文件路径
+        processed_video = os.path.join(temp_dir, f"processed_{str(uuid.uuid4())}.mp4")
+        
         # 获取目标分辨率
         if params.video_aspect == VideoAspect.portrait:
             max_width = 1080
@@ -415,102 +477,57 @@ def generate_video(
             hw_accel = "libx264"
             logger.info("使用软件编码器")
         
-        # 获取视频信息
-        probe_cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", 
-                    "-show_entries", "stream=width,height,codec_name", "-of", "json", video_path]
-        probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
-        
-        if probe_result.returncode != 0:
-            logger.error(f"无法获取视频信息: {probe_result.stderr}")
+        # 使用新的VideoProcessor获取视频特性
+        video_features = VideoProcessor.get_video_features(video_path)
+        if not video_features:
+            logger.error("无法获取视频特性，处理终止")
             return None
         
-        video_info = json.loads(probe_result.stdout)
+        logger.info(f"视频特性: 宽={video_features['width']}, 高={video_features['height']}, " +
+                   f"编码={video_features['codec']}, 旋转={video_features['rotation']}°")
+        logger.info(f"视频分类: 4K={video_features['is_4k']}, 高清={video_features['is_hd']}, " +
+                   f"需要旋转={video_features['needs_rotation']}")
         
-        if "streams" not in video_info or not video_info["streams"]:
-            logger.error("无法读取视频流信息")
-            return None
-        
-        stream = video_info["streams"][0]
-        original_width = int(stream.get("width", 0))
-        original_height = int(stream.get("height", 0))
-        original_codec = stream.get("codec_name", "")
-                
-        logger.info(f"原始视频信息 - 宽: {original_width}, 高: {original_height}, 编码: {original_codec}")
-        
-        # 处理视频分辨率 - 预处理应该已经处理了旋转问题，这里只关注分辨率
-        processed_video = os.path.join(temp_dir, "processed_video.mp4")
-        
-        # 设置尺寸调整滤镜
-        scale_filter = ""
-        needs_resize = False
-        
-        # 检查是否需要调整尺寸
-        if original_width > max_width or original_height > max_height:
-            needs_resize = True
-            logger.info(f"视频尺寸超过限制，需要调整")
-            
-            # 计算调整后的尺寸，保持宽高比
-            if params.video_aspect == VideoAspect.portrait:
-                # 目标是竖屏视频
-                if original_height > original_width:
-                    # 原始也是竖屏，保持比例
-                    scale_ratio = min(max_width / original_width, max_height / original_height)
-                    target_width = int(original_width * scale_ratio)
-                    target_height = int(original_height * scale_ratio)
-                    scale_filter = f"scale={target_width}:{target_height}:flags=lanczos+accurate_rnd"
-                else:
-                    # 原始是横屏，需要居中放置在竖屏框架中
-                    scale_ratio = min(max_width / original_width, max_height / original_height)
-                    target_width = int(original_width * scale_ratio)
-                    target_height = int(original_height * scale_ratio)
-                    scale_filter = f"scale={target_width}:{target_height}:flags=lanczos+accurate_rnd,pad={max_width}:{max_height}:(ow-iw)/2:(oh-ih)/2"
-            else:
-                # 目标是横屏视频
-                if original_width > original_height:
-                    # 原始也是横屏，保持比例
-                    scale_ratio = min(max_width / original_width, max_height / original_height)
-                    target_width = int(original_width * scale_ratio)
-                    target_height = int(original_height * scale_ratio)
-                    scale_filter = f"scale={target_width}:{target_height}:flags=lanczos+accurate_rnd"
-                else:
-                    # 原始是竖屏，需要居中放置在横屏框架中
-                    scale_ratio = min(max_width / original_width, max_height / original_height)
-                    target_width = int(original_width * scale_ratio)
-                    target_height = int(original_height * scale_ratio)
-                    scale_filter = f"scale={target_width}:{target_height}:flags=lanczos+accurate_rnd,pad={max_width}:{max_height}:(ow-iw)/2:(oh-ih)/2"
+        # 确定目标分辨率
+        if params.video_aspect == VideoAspect.portrait:
+            target_width = 1080
+            target_height = 1920
         else:
-            logger.info("视频尺寸在限制范围内，保持原始尺寸")
+            target_width = 1920
+            target_height = 1080
         
-        # 编码参数设置
-        is_4k = original_width * original_height >= 3840 * 2160
-        is_hevc = original_codec.lower() == 'hevc'
-        is_4k_hevc = is_4k and is_hevc
+        # 获取基础编码参数
+        encoder_params = EncoderConfig.get_encoder_params(hw_accel, target_width, target_height)
         
-        # 获取优化的编码参数
-        encoder_params = EncoderConfig.get_encoder_params(hw_accel, max_width, max_height)
-        logger.info(f"编码器参数: {encoder_params}")
+        # 基于视频特性优化编码参数
+        optimized_params = VideoProcessor.optimize_encoding_params(video_features, encoder_params)
+        logger.info(f"优化后的编码参数: {optimized_params}")
         
         # 提取编码参数
-        bitrate = encoder_params["bitrate"]
-        maxrate = encoder_params["maxrate"]
-        bufsize = encoder_params["bufsize"]
+        bitrate = optimized_params["bitrate"]
+        maxrate = optimized_params["maxrate"]
+        bufsize = optimized_params["bufsize"]
         
-        # 获取编码器参数列表
+        # 获取其他编码器参数
         encoder_args = []
-        for key, value in encoder_params.items():
+        for key, value in optimized_params.items():
             if key not in ["bitrate", "maxrate", "bufsize"]:
                 encoder_args.extend([f"-{key}", str(value)])
         
         # 确定是否需要处理视频
-        needs_processing = needs_resize or original_codec != "h264"
+        needs_resize = video_features["effective_width"] > target_width or video_features["effective_height"] > target_height
+        needs_processing = needs_resize or video_features["codec"] != "h264" or video_features["needs_rotation"]
         
-        # 4K HEVC视频特殊处理：保持高质量
-        if is_4k_hevc:
-            # 增加码率以保持4K视频质量
+        # 构建统一的滤镜字符串
+        scale_filter = VideoProcessor.build_filter_string(video_features, target_width, target_height)
+        
+        # 4K视频特殊处理：保持高质量 (不再限制为HEVC编码)
+        if video_features["is_4k"] or (video_features["is_hd"] and video_features["needs_rotation"]):
+            # 增加码率以保持高质量视频质量
             bitrate = min(20000, int(bitrate * 1.5))  # 提高码率，最高20Mbps
             maxrate = min(30000, int(maxrate * 1.5))  # 提高最大码率，最高30Mbps
             bufsize = min(40000, int(bufsize * 1.5))  # 提高缓冲大小
-            logger.info(f"检测到4K HEVC视频，提高码率: {bitrate}k, 最大码率: {maxrate}k")
+            logger.info(f"检测到高清视频，提高码率: {bitrate}k, 最大码率: {maxrate}k")
         
         if needs_processing:
             # 构建完整的视频滤镜
@@ -521,6 +538,12 @@ def generate_video(
                 full_filter += ",format=yuv420p"
             else:
                 full_filter = "format=yuv420p"
+            
+            # 检查是否为MOV格式，增强日志帮助诊断
+            is_mov_format = video_path.lower().endswith('.mov')
+            if is_mov_format:
+                logger.info(f"处理MOV格式视频: 旋转角度={video_features['rotation']}°, " +
+                            f"需要旋转={video_features['needs_rotation']}, 应用滤镜: {full_filter}")
             
             # 构建视频处理命令
             video_cmd = [
@@ -534,6 +557,7 @@ def generate_video(
                 *encoder_args,  # 展开其他编码器参数
                 "-an",  # 不包含音频
                 "-map_metadata", "-1",  # 移除所有元数据
+                "-metadata:s:v", "rotate=0",  # 明确移除旋转元数据，避免播放器自动旋转
                 processed_video
             ]
             

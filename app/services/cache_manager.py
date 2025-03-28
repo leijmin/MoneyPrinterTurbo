@@ -15,7 +15,7 @@ class VideoCacheManager:
             cls._instance._initialized = False
         return cls._instance
     
-    def __init__(self, ttl=86400):
+    def __init__(self, ttl=200):
         """
         初始化缓存管理器
         
@@ -87,8 +87,18 @@ class VideoCacheManager:
         try:
             # 从内存缓存获取
             if key in self._memory_cache:
+                cached_data = self._memory_cache[key]
                 logger.info(f"✅ 命中缓存! 读取元数据: {os.path.basename(file_path)}")
-                return self._memory_cache[key]
+                
+                # 根据metadata_type返回适当类型的对象
+                if metadata_type == "detailed":
+                    from app.services.video_metadata import VideoDetailedMetadata
+                    return VideoDetailedMetadata.from_dict(cached_data)
+                elif metadata_type == "basic":
+                    from app.services.video_metadata import VideoBasicMetadata
+                    return VideoBasicMetadata.from_dict(cached_data)
+                else:
+                    return cached_data
                 
             logger.info(f"❗ 缓存未命中: {os.path.basename(file_path)}")
         except Exception as e:
@@ -111,6 +121,10 @@ class VideoCacheManager:
         if not self._initialized or not metadata:
             return False
             
+        # 如果是元数据对象，转换为字典再缓存
+        if hasattr(metadata, 'to_dict'):
+            metadata = metadata.to_dict()
+        
         key = self.generate_key(file_path, metadata_type)
         
         try:

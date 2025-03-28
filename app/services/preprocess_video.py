@@ -150,14 +150,14 @@ class VideoPreprocessor:
             return None
 
     @staticmethod
-    def preprocess_video_ffmpeg(materials: List[MaterialInfo], clip_duration=4):
+    def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
         """
-        使用ffmpeg预处理视频和图片素材
+        处理视频和图片素材
         
         Args:
             materials: 素材信息列表
             clip_duration: 图片转视频的持续时间（秒）
-        
+            
         Returns:
             处理后的素材列表
         """
@@ -165,70 +165,27 @@ class VideoPreprocessor:
         if materials is None:
             logger.warning("材料列表为空")
             return []
-        
+            
         # 处理非列表类型的错误参数情况
         if not isinstance(materials, list):
-            logger.warning(f"无效的材料参数: {materials}")
-            return []
-        
-        # 预定义目标分辨率 - 竖屏和横屏
-        target_portrait_width = 1080
-        target_portrait_height = 1920
-        target_landscape_width = 1920
-        target_landscape_height = 1080
-        
-        for material in materials:
-            # 检查是否是有效的MaterialInfo对象
-            if not hasattr(material, 'url') or not material.url:
-                logger.warning(f"无效的素材对象: {material}")
-                continue
-
-            # 检查文件是否存在
-            if not os.path.exists(material.url):
-                logger.error(f"文件不存在: {material.url}")
-                continue
-            
-            ext = utils.parse_extension(material.url)
-            
-            try:
-                if ext in const.FILE_TYPE_VIDEOS:
-                    # 获取视频信息
-                    video_info = VideoPreprocessor.get_video_info(material.url)
-                    if not video_info:
-                        logger.error(f"无法获取视频信息: {material.url}")
-                        continue
-                    
-                    # 从视频信息中提取所需数据
-                    width = video_info["width"]
-                    height = video_info["height"]
-                    codec = video_info["codec"]
-                    rotation = video_info["rotation"]
-                    
-                    # 检测GPU加速器
-                    encoder = HardwareAccelerator.get_optimal_encoder()
-                    logger.info(f"使用编码器: {encoder}")
-                    
-                    # 处理视频逻辑...
-                    # [其余代码保持不变]
-                    
-                elif ext in const.FILE_TYPE_IMAGES:
-                    # 图片处理逻辑...
-                    # [其余代码保持不变]
-                    
-                else:
-                    logger.warning(f"不支持的文件类型: {material.url}")
-                    continue
+            logger.warning(f"材料参数类型错误: 预期列表，实际 {type(materials)}")
+            # 如果是单个对象，尝试转换为列表
+            if isinstance(materials, MaterialInfo):
+                materials = [materials]
+            else:
+                logger.error(f"无法处理的材料类型: {type(materials)}")
+                return []
                 
-            except Exception as e:
-                logger.error(f"处理素材失败: {material.url}, 错误: {str(e)}")
-                continue
-                
-        return materials
-
+        # 创建处理器实例
+        processor = VideoPreprocessor()
+        
+        # 处理视频素材
+        return processor._process_materials(materials, clip_duration)
+    
     @staticmethod
-    def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
+    def preprocess_video_ffmpeg(materials: List[MaterialInfo], clip_duration=4):
         """
-        处理视频和图片素材，是preprocess_video_ffmpeg的便捷包装
+        使用ffmpeg处理视频和图片素材
         
         Args:
             materials: 素材信息列表
@@ -237,78 +194,163 @@ class VideoPreprocessor:
         Returns:
             处理后的素材列表
         """
-        return VideoPreprocessor.preprocess_video_ffmpeg(materials, clip_duration)
-
-    def preprocess_video_ffmpeg(self, materials, clip_duration=4):
-        """使用ffmpeg处理视频(优化版)"""
-        # 参数验证
-        if materials is None:
-            logger.warning("材料列表为空")
-            return []
+        # 直接调用preprocess_video，保持API一致性
+        return VideoPreprocessor.preprocess_video(materials, clip_duration)
+    
+    def _process_materials(self, materials: List[MaterialInfo], clip_duration=4):
+        """
+        处理素材列表（实例方法）
         
-        if not isinstance(materials, list):
-            logger.warning(f"无效的材料参数: {materials}")
-            return []
-        
+        Args:
+            materials: 素材信息列表
+            clip_duration: 图片转视频的持续时间（秒）
+            
+        Returns:
+            处理后的素材列表
+        """
         # 计数器
         processed_count = 0
         failed_count = 0
         skipped_count = 0
         
         # 获取编码器
-        encoder = HardwareAccelerator.get_optimal_encoder()
-        logger.info(f"使用编码器: {encoder}")
+        encoder = self._get_optimal_encoder()
+        logger.info(f"视频处理使用编码器: {encoder}")
+        
+        # 初始化视频元数据提取器
+        self.video_metadata_extractor = VideoMetadataExtractor()
         
         for idx, material in enumerate(materials):
-            if not hasattr(material, 'url') or not material.url:
-                logger.warning(f"跳过无效素材: {material}")
-                skipped_count += 1
-                continue
-            
-            if not os.path.exists(material.url):
-                logger.warning(f"素材文件不存在: {material.url}")
-                skipped_count += 1
-                continue
-            
             try:
-                logger.info(f"处理视频 [{idx+1}/{len(materials)}]: {os.path.basename(material.url)}")
+                # 跳过无效材料
+                if not self._is_valid_material(material):
+                    logger.warning(f"跳过无效素材: {getattr(material, 'url', '<无URL>')}")
+                    skipped_count += 1
+                    continue
                 
-                # 处理文件
+                logger.info(f"处理素材 [{idx+1}/{len(materials)}]: {os.path.basename(material.url)}")
+                
+                # 根据文件类型处理
                 ext = utils.parse_extension(material.url)
                 
                 if ext in const.FILE_TYPE_VIDEOS:
-                    # 获取视频信息
-                    video_info = self.get_video_info(material.url)
-                    if not video_info:
-                        logger.error(f"无法获取视频信息: {material.url}")
-                        failed_count += 1
-                        continue
-                    
-                    # 判断是否需要处理
-                    if self._process_video_file(material, video_info, encoder):
+                    # 处理视频
+                    success = self._process_video_file(material, encoder, clip_duration)
+                    if success:
                         processed_count += 1
                     else:
                         failed_count += 1
-                    
                 elif ext in const.FILE_TYPE_IMAGES:
                     # 处理图片转视频
-                    if self._process_image_file(material, clip_duration):
+                    success = self._process_image_file(material, clip_duration)
+                    if success:
                         processed_count += 1
                     else:
                         failed_count += 1
                 else:
-                    logger.warning(f"不支持的文件类型: {material.url}")
+                    logger.warning(f"不支持的文件类型: {ext}")
                     skipped_count += 1
-                
             except Exception as e:
                 logger.error(f"处理素材出错: {str(e)}")
+                import traceback
+                logger.debug(f"错误详情: {traceback.format_exc()}")
                 failed_count += 1
         
         # 处理结果统计
         logger.info(f"视频处理完成: 总计{len(materials)}个, 成功{processed_count}个, "
-                    f"失败{failed_count}个, 跳过{skipped_count}个")
+                   f"失败{failed_count}个, 跳过{skipped_count}个")
         
         return materials
+    
+    def _process_video_file(self, material, encoder, clip_duration):
+        """处理单个视频文件"""
+        try:
+            # 1. 提取视频信息
+            video_info = self._extract_video_info(material.url)
+            if not video_info:
+                logger.error(f"无法获取视频信息: {os.path.basename(material.url)}")
+                return False
+            
+            # 2. 判断是否需要处理
+            process_config = self._determine_processing_needs(video_info, material.url)
+            
+            # 如果不需要处理，直接返回成功
+            if not process_config.get("needs_processing", False):
+                logger.info(f"视频无需处理: {os.path.basename(material.url)}")
+                return True
+            
+            # 3. 执行视频处理
+            return self._execute_video_processing(material, video_info, process_config, encoder, clip_duration)
+        except Exception as e:
+            logger.error(f"处理视频文件时出错: {str(e)}")
+            return False
+    
+    def _process_image_file(self, material, clip_duration):
+        """处理图片转视频"""
+        try:
+            video_file = f"{material.url}.mp4"
+            
+            # 确保输出目录存在
+            output_dir = os.path.dirname(video_file)
+            os.makedirs(output_dir, exist_ok=True)
+            
+            logger.info(f"将图片转换为视频: {os.path.basename(material.url)}")
+            
+            # 缩放效果：使用zoompan滤镜并确保填充1080x1920的目标区域
+            image_cmd = [
+                "ffmpeg", "-y",
+                "-loop", "1",  # 循环输入
+                "-i", material.url,
+                "-vf", f"zoompan=z='min(zoom+0.0015,1.2)':d={int(clip_duration*30)}:fps=30:x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2',scale=1080:1920:force_original_aspect_ratio=1,crop=1080:1920,format=yuv420p",
+                "-c:v", "libx264",
+                "-t", str(clip_duration),
+                "-pix_fmt", "yuv420p",
+                video_file
+            ]
+            
+            # 执行命令
+            result = subprocess.run(
+                image_cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                encoding='utf-8',
+                errors='replace',
+                check=False
+            )
+            
+            if result.returncode != 0:
+                stderr_lines = result.stderr.splitlines()
+                error_details = "\n".join(stderr_lines[-5:]) if stderr_lines else "未知错误"
+                logger.error(f"图片转视频失败: {error_details}")
+                return False
+            
+            # 检查生成的视频文件
+            if os.path.exists(video_file) and os.path.getsize(video_file) > 0:
+                material.url = video_file
+                logger.info(f"图片转视频成功: {os.path.basename(video_file)}")
+                return True
+            else:
+                logger.error(f"生成的视频文件无效: {video_file}")
+                return False
+        
+        except Exception as e:
+            logger.error(f"图片转视频时出错: {str(e)}")
+            return False
+    
+    def _extract_video_info(self, video_path):
+        """提取视频元数据信息"""
+        try:
+            # 使用VideoMetadataExtractor获取视频信息
+            return VideoMetadataExtractor.get_video_metadata(video_path)
+        except Exception as e:
+            logger.error(f"提取视频信息失败: {str(e)}")
+            return None
+    
+    def _get_optimal_encoder(self):
+        """获取最优编码器（考虑GPU加速）"""
+        from app.services.video_encoder import HardwareAccelerator
+        return HardwareAccelerator.get_optimal_encoder()
 
     def _is_valid_material(self, material):
         """检查材料是否有效"""
@@ -317,64 +359,13 @@ class VideoPreprocessor:
             return False
         return True
     
-    def _process_single_video(self, material, clip_duration, encoder):
-        """处理单个视频文件"""
-        try:
-            # 1. 提取视频信息
-            video_path = material.url
-            video_info = self._extract_video_info(video_path)
-            
-            if not video_info:
-                logger.error(f"无法获取有效的视频信息: {os.path.basename(video_path)}")
-                return False
-            
-            # 2. 判断是否需要处理
-            process_config = self._determine_processing_needs(video_info, video_path)
-            
-            # 如果不需要处理，直接返回成功
-            if not process_config["needs_processing"]:
-                logger.info(f"视频无需处理: {os.path.basename(video_path)}")
-                return True
-            
-            # 3. 执行视频处理
-            return self._execute_video_processing(material, video_info, process_config, encoder, clip_duration)
-        
-        except Exception as e:
-            logger.error(f"视频处理过程中出错: {str(e)}")
-            import traceback
-            logger.debug(f"错误详情: {traceback.format_exc()}")
-            return False
-
-    def _extract_video_info(self, video_path):
-        """提取视频元数据信息"""
-        try:
-            video_info = self.video_metadata_extractor.get_video_info(video_path)
-            
-            # 检查视频信息是否有效
-            if not video_info or "width" not in video_info or "height" not in video_info:
-                logger.error(f"无法获取视频信息: {os.path.basename(video_path)}")
-                return None
-            
-            # 日志记录视频信息
-            width = video_info["width"]
-            height = video_info["height"]
-            rotation = video_info.get("rotation", 0)
-            codec = video_info.get("codec", "unknown")
-            
-            logger.info(f"视频信息: {width}x{height}, 旋转:{rotation}°, 编码:{codec}")
-            return video_info
-        
-        except Exception as e:
-            logger.error(f"提取视频信息失败: {str(e)}")
-            return None
-
     def _determine_processing_needs(self, video_info, file_path):
         """确定视频处理需求"""
-        # 提取视频基本信息
-        width = int(video_info.get("width", 0))
-        height = int(video_info.get("height", 0))
-        rotation = int(video_info.get("rotation", 0))
-        codec = str(video_info.get("codec", "unknown"))
+        # 提取视频基本信息 - 现在video_info是对象而非字典
+        width = video_info.width
+        height = video_info.height
+        rotation = video_info.rotation
+        codec = video_info.codec
         
         # 文件扩展名
         _, ext = os.path.splitext(file_path)
@@ -390,6 +381,7 @@ class VideoPreprocessor:
             "needs_processing": False,
             "needs_rotation": False,
             "needs_scaling": False,
+            "needs_padding": False,  # 新增参数，表示需要填充黑边
             "use_metadata_rotation": False,
             "target_width": width,
             "target_height": height,
@@ -409,35 +401,48 @@ class VideoPreprocessor:
         if rotation != 0:
             # 标准化旋转角度为90的倍数
             normalized_rotation = ((rotation + 45) // 90 * 90) % 360
-            video_info["rotation"] = normalized_rotation  # 更新为标准角度
             
-            # 高质量视频优先使用元数据旋转
+            # 更新对象属性而非字典键值
+            # 错误代码：video_info["rotation"] = normalized_rotation
+            # 正确方式：为对象赋值
+            if hasattr(video_info, 'rotation'):
+                video_info.rotation = normalized_rotation
+            
+            # 判断旋转后的有效尺寸
+            effective_width, effective_height = width, height
+            if normalized_rotation in [90, 270]:
+                effective_width, effective_height = height, width
+            
+            # 高质量视频处理
             if config["is_high_quality"]:
-                config["use_metadata_rotation"] = True
-                logger.info(f"对高质量视频使用元数据旋转: {normalized_rotation}°")
+                logger.info(f"对高质量视频处理旋转: {normalized_rotation}°")
+                
+                # 无论是AVC还是HEVC，高分辨率横屏视频都使用物理旋转+填充处理
+                if is_standard_landscape:
+                    config["needs_rotation"] = True
+                    config["needs_padding"] = True  # 添加填充需求
+                    logger.info("应用物理旋转并填充处理")
+                else:
+                    # 竖屏视频可以使用元数据旋转
+                    config["use_metadata_rotation"] = True
+                    logger.info("对竖屏视频使用元数据旋转")
             else:
                 config["needs_rotation"] = True
-                config["needs_processing"] = True
                 logger.info(f"需要物理旋转视频: {normalized_rotation}°")
         
-        # 3. 特殊处理：所有高分辨率视频的特殊处理
-        is_high_res = width * height >= 3840 * 2160 or width >= 1920 or height >= 1920
-        
-        if is_high_res and is_standard_landscape:
-            logger.info("检测到高分辨率标准横屏视频，采用专业处理")
+        # 3. 特殊处理：所有高分辨率视频的统一处理
+        if config["is_high_quality"] and is_standard_landscape:
+            logger.info("检测到高分辨率标准横屏视频，应用专业处理")
             
-            # 对于所有高分辨率视频都采用同样的处理方式
+            # 对于所有高分辨率视频都采用统一处理方式
             if rotation != 0:
-                if "mov" in ext.lower() or "mp4" in ext.lower():
-                    logger.info(f"高分辨率视频旋转处理: {rotation}°")
-                    # AVC编码优先使用物理旋转确保兼容性
-                    if "avc" in codec.lower() or "h264" in codec.lower():
-                        config["needs_rotation"] = True
-                        config["use_metadata_rotation"] = False
-                    else:
-                        # HEVC继续使用元数据旋转
-                        config["use_metadata_rotation"] = True
-                        config["needs_rotation"] = False
+                config["needs_processing"] = True
+                
+                # 确保AVC和HEVC都处理正确 - 修复关键问题
+                config["needs_rotation"] = True  # 使用物理旋转
+                config["needs_padding"] = True   # 确保添加填充
+                
+                logger.info(f"高分辨率{codec}视频旋转处理：添加物理旋转和填充")
         
         # 4. 检查尺寸是否需要调整
         max_width = 1920
@@ -467,15 +472,50 @@ class VideoPreprocessor:
         # 根据配置构建滤镜字符串
         vf_filter = self._build_filter_string(video_info, config)
         
-        # 获取硬件加速参数
-        input_params = HardwareAccelerator.optimize_input_parameters(encoder, source_path)
+        # 判断是否使用GPU编码器
+        is_gpu_encoder = "nvenc" in encoder or "qsv" in encoder or "amf" in encoder
         
-        # 获取编码器参数(根据目标尺寸)
-        encoder_params = EncoderConfig.get_encoder_params(
-            encoder, 
-            config["target_width"], 
-            config["target_height"]
-        )
+        # 如果是GPU编码，强制执行GPU诊断
+        if is_gpu_encoder and "nvenc" in encoder:
+            logger.info("使用NVENC编码，进行GPU兼容性检查...")
+            diagnostic = HardwareAccelerator.diagnose_gpu_issues()
+            
+            # 如果诊断显示NVENC不可用，立即切换到CPU编码
+            if not diagnostic["nvenc_functional"]:
+                logger.warning("NVENC功能测试失败，切换到CPU编码")
+                encoder = "libx264"
+                is_gpu_encoder = False
+        
+        # 获取硬件加速参数，对于GPU编码器使用特别简化的参数
+        input_params = []
+        if is_gpu_encoder:
+            if "nvenc" in encoder:
+                # 超简化NVIDIA参数
+                input_params = ["-hwaccel", "cuda"]
+                logger.info("使用简化NVIDIA硬件加速设置")
+            else:
+                input_params = HardwareAccelerator.optimize_input_parameters(encoder, source_path)
+        
+        # 使用更安全的编码参数
+        encoder_params = {}
+        if is_gpu_encoder:
+            # GPU编码使用极简参数
+            encoder_params = self._sanitize_gpu_params({}, encoder)
+            
+            # 添加基本码率控制
+            width = config["target_width"]
+            height = config["target_height"]
+            bitrate = EncoderConfig.get_optimal_bitrate(width, height, config.get("is_4k", False))
+            
+            encoder_params["bitrate"] = bitrate
+            encoder_params["maxrate"] = int(bitrate * 1.5)
+            encoder_params["bufsize"] = int(bitrate * 2)
+        else:
+            # CPU编码使用标准参数
+            encoder_params = {
+                "preset": "medium",
+                "crf": "23"
+            }
         
         # 构建FFMPEG命令
         cmd = self._build_ffmpeg_command(
@@ -491,25 +531,32 @@ class VideoPreprocessor:
         # 执行命令
         success = self._run_ffmpeg_command(cmd)
         
-        # 如果失败，尝试简化命令重试
-        if not success:
-            logger.warning(f"使用{encoder}处理视频失败，尝试CPU编码...")
-            # 简化滤镜和编码器
-            simple_filter = self._build_simple_filter(video_info, config)
-            simple_cmd = self._build_ffmpeg_command(
+        # 如果GPU编码失败，尝试CPU编码
+        if not success and is_gpu_encoder:
+            logger.warning(f"GPU编码失败，切换到CPU编码...")
+            
+            # 使用CPU编码参数
+            cpu_params = {
+                "preset": "medium", 
+                "crf": "23"
+            }
+            
+            # 构建CPU编码命令
+            cpu_cmd = self._build_ffmpeg_command(
                 source_path, 
                 processed_path,
-                "libx264",  # 使用软件编码器
-                simple_filter,
-                [],  # 不使用硬件加速
-                {"preset": "medium", "crf": "23"},  # 简单编码参数
+                "libx264",
+                vf_filter,
+                [],  # 无特殊输入参数
+                cpu_params,
                 config
             )
-            success = self._run_ffmpeg_command(simple_cmd)
+            
+            success = self._run_ffmpeg_command(cpu_cmd)
         
         # 如果仍然失败，尝试直接复制流
         if not success:
-            logger.warning("简化编码也失败，尝试直接流复制...")
+            logger.warning("编码失败，尝试直接流复制...")
             copy_cmd = [
                 "ffmpeg", "-y",
                 "-i", source_path,
@@ -521,16 +568,9 @@ class VideoPreprocessor:
         
         # 处理成功后，更新材料路径
         if success and os.path.exists(processed_path) and os.path.getsize(processed_path) > 0:
-            # 获取处理后视频的信息以验证
-            processed_info = self._extract_video_info(processed_path)
-            
-            if processed_info and processed_info.get("duration", 0) > 0:
-                material.url = processed_path
-                logger.success(f"视频处理成功: {os.path.basename(processed_path)}")
-                return True
-            else:
-                logger.error(f"处理后的视频无效: {os.path.basename(processed_path)}")
-                return False
+            material.url = processed_path
+            logger.success(f"视频处理成功: {os.path.basename(processed_path)}")
+            return True
         else:
             logger.error(f"视频处理失败: {os.path.basename(source_path)}")
             return False
@@ -539,31 +579,59 @@ class VideoPreprocessor:
         """构建视频滤镜字符串"""
         filters = []
         
+        width = int(video_info.get("width", 0))
+        height = int(video_info.get("height", 0))
+        rotation = int(video_info.get("rotation", 0))
+        
+        # 计算旋转后的有效尺寸
+        effective_width, effective_height = width, height
+        if rotation in [90, 270]:
+            effective_width, effective_height = height, width
+        
         # 1. 旋转滤镜(如果需要)
-        if config["needs_rotation"] and not config["use_metadata_rotation"]:
-            rotation = video_info.get("rotation", 0)
-            # 标准化旋转角度
-            normalized_rotation = ((rotation + 45) // 90 * 90) % 360
-            
+        if config["needs_rotation"]:
             rotation_filters = {
                 90: "transpose=1",     # 顺时针90度
                 180: "transpose=2,transpose=2",  # 180度
                 270: "transpose=2"     # 逆时针90度(相当于顺时针270度)
             }
             
-            if normalized_rotation in rotation_filters:
-                filters.append(rotation_filters[normalized_rotation])
+            if rotation in rotation_filters:
+                filters.append(rotation_filters[rotation])
         
-        # 2. 缩放滤镜(如果需要)
-        if config["needs_scaling"]:
-            scale_filter = f"scale={config['target_width']}:{config['target_height']}:flags=lanczos"
+        # 2. 缩放和填充滤镜
+        target_width = config["target_width"]
+        target_height = config["target_height"]
+        
+        # 计算目标宽高比
+        target_ratio = target_width / target_height
+        
+        # 对于高分辨率且需要旋转的视频，特别处理填充
+        if config["needs_padding"] or (config["is_high_quality"] and config["needs_rotation"]):
+            # 先确保等比例缩放
+            scale_ratio = min(target_width / effective_width, target_height / effective_height)
+            scaled_width = int(effective_width * scale_ratio)
+            scaled_height = int(effective_height * scale_ratio)
+            
+            # 构建填充滤镜：先缩放，再填充黑边以适应目标分辨率
+            scale_filter = f"scale={scaled_width}:{scaled_height}:flags=lanczos"
+            pad_filter = f",pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:color=black"
+            
+            filters.append(scale_filter + pad_filter)
+            logger.info(f"应用缩放与填充: 缩放至{scaled_width}x{scaled_height}并填充至{target_width}x{target_height}")
+        elif config["needs_scaling"]:
+            # 常规缩放处理
+            scale_filter = f"scale={target_width}:{target_height}:flags=lanczos"
             filters.append(scale_filter)
+            logger.info(f"应用常规缩放: {width}x{height} -> {target_width}x{target_height}")
         
         # 3. 确保输出为yuv420p格式(兼容性更好)
         filters.append("format=yuv420p")
         
         # 组合所有滤镜
-        return ",".join(filters) if filters else "null"
+        filter_string = ",".join(filters) if filters else "null"
+        logger.info(f"最终滤镜串: {filter_string}")
+        return filter_string
 
     def _build_ffmpeg_command(self, input_path, output_path, encoder, vf_filter, input_params, encoder_params, config):
         """构建FFMPEG命令"""
@@ -614,7 +682,15 @@ class VideoPreprocessor:
     def _run_ffmpeg_command(self, cmd):
         """执行FFMPEG命令并处理输出"""
         try:
-            logger.info(f"执行命令: {' '.join(cmd)}")
+            # 提取encoder信息用于日志
+            encoder = "unknown"
+            for i, arg in enumerate(cmd):
+                if arg == "-c:v" and i+1 < len(cmd):
+                    encoder = cmd[i+1]
+                    break
+            
+            logger.info(f"使用编码器 {encoder} 执行命令")
+            logger.debug(f"完整命令: {' '.join(cmd)}")
             
             process = subprocess.Popen(
                 cmd, 
@@ -627,37 +703,108 @@ class VideoPreprocessor:
             
             # 收集完整错误输出
             stderr_output = []
+            progress_shown = False
             
             # 实时显示处理进度
             for line in process.stderr:
                 stderr_output.append(line)
+                
+                # 显示进度
                 if "time=" in line and "bitrate=" in line:
-                    logger.debug(f"进度: {line.strip()}")
+                    if not progress_shown:
+                        logger.info(f"处理进度: {line.strip()}")
+                        progress_shown = True
+                    else:
+                        logger.debug(f"进度: {line.strip()}")
+                
+                # 显示错误
+                if "Error" in line or "Invalid" in line or "failed" in line:
+                    logger.warning(f"处理中警告: {line.strip()}")
             
             process.wait()
             
             if process.returncode != 0:
-                logger.error("命令执行失败，错误详情:")
+                logger.error(f"命令执行失败 (返回码: {process.returncode}), 错误详情:")
+                error_shown = False
+                
                 for line in stderr_output:
-                    if "Error" in line or "Invalid" in line or "failed" in line:
+                    if "Error" in line or "Invalid" in line or "failed" in line or "No such filter" in line:
                         logger.error(line.strip())
+                        error_shown = True
+                
+                # 如果没有找到特定错误，显示最后几行
+                if not error_shown and stderr_output:
+                    logger.error("最后几行输出:")
+                    for line in stderr_output[-5:]:
+                        logger.error(line.strip())
+                    
                 return False
             
+            logger.info(f"命令执行成功，使用编码器: {encoder}")
             return True
-        
+            
         except Exception as e:
             logger.error(f"执行命令时出错: {str(e)}")
+            import traceback
+            logger.debug(f"错误堆栈: {traceback.format_exc()}")
             return False
 
-    def _build_simple_filter(self, width, height, target_width, target_height):
-        """构建安全的视频滤镜"""
+    def _build_simple_filter(self, video_info, config):
+        """构建简化的视频滤镜字符串用于降级处理"""
+        # 提取基本信息
+        width = int(video_info.get("width", 0))
+        height = int(video_info.get("height", 0))
+        rotation = int(video_info.get("rotation", 0))
+        
+        # 确保目标尺寸有效
+        target_width = int(config.get("target_width", 1920))
+        target_height = int(config.get("target_height", 1080))
+        
+        # 根据旋转计算有效尺寸
+        effective_width, effective_height = width, height
+        if rotation in [90, 270, -90]:
+            effective_width, effective_height = height, width
+        
         # 避免无效的尺寸
-        if width <= 0: width = 1
-        if height <= 0: height = 1
+        if effective_width <= 0: effective_width = 1
+        if effective_height <= 0: effective_height = 1
         
         # 使用安全的填充模式
         return (f"scale=w='min({target_width},iw)':h='min({target_height},ih)':"
                 f"force_original_aspect_ratio=1,"
                 f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:color=black,"
                 f"format=yuv420p")
+
+    def _sanitize_gpu_params(self, params, encoder):
+        """优化GPU编码器参数，移除可能导致错误的参数"""
+        safe_params = {}
+        
+        # 只保留最基本、最稳定的参数
+        if "nvenc" in encoder:
+            # NVENC - 仅保留核心参数
+            safe_params = {
+                "preset": "p2",  # 使用较低复杂度的预设
+                "tune": "hq"     # 高质量调优
+            }
+        elif "qsv" in encoder:
+            # QSV - 简化参数
+            safe_params = {
+                "preset": "medium"
+            }
+        elif "amf" in encoder:
+            # AMF - 简化参数
+            safe_params = {
+                "quality": "speed"
+            }
+        else:
+            # 复制原参数
+            safe_params = params.copy()
+        
+        # 保留码率参数
+        for key in ["bitrate", "maxrate", "bufsize"]:
+            if key in params:
+                safe_params[key] = params[key]
+        
+        logger.info(f"优化{encoder}参数: {safe_params}")
+        return safe_params
 
