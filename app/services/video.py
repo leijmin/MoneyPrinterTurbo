@@ -465,9 +465,8 @@ def generate_video(
             logger.error(f"音频处理失败: {e.stderr.decode('utf-8', errors='replace') if e.stderr else ''}")
             return None
             
-        # 处理字幕 - 使用两步法处理字幕，避免路径问题
-        has_subtitle = False
-        subtitle_file = None
+        # 处理字幕
+        subtitle_filter = ""
         if subtitle_path and os.path.exists(subtitle_path) and params.subtitle_enabled:
             try:
                 # 准备字体
@@ -476,86 +475,104 @@ def generate_video(
                     params.font_name = "STHeitiMedium.ttc"
                 font_path = os.path.join(utils.font_dir(), params.font_name)
                 
-                logger.info("使用两步法处理字幕...")
+                logger.info(f"处理字幕文件: {os.path.basename(subtitle_path)}")
                 
-                # 第一步：先将视频和音频合并
-                temp_video_path = os.path.join(temp_dir, "temp_video_no_subtitle.mp4")
-                
-                # 合并视频和音频
-                temp_cmd = [
+                # 创建ASS字幕
+                ass_subtitle = os.path.join(temp_dir, "subtitle.ass")
+                subtitle_cmd = [
                     "ffmpeg", "-y",
-                    "-i", video_path,
-                    "-i", merged_audio,
-                    "-map", "0:v",
-                    "-map", "1:a",
-                    "-c:v", "copy",
-                    "-c:a", "copy",
-                    "-shortest",
-                    temp_video_path
+                    "-i", subtitle_path,
+                    "-f", "ass",
+                    ass_subtitle
                 ]
                 
-                logger.info("第一步：合并视频和音频...")
-                try:
-                    subprocess.run(temp_cmd, check=True, capture_output=True)
-                    if os.path.exists(temp_video_path) and os.path.getsize(temp_video_path) > 0:
-                        logger.info("视频和音频合并成功")
+                logger.info("转换字幕格式...")
+                subprocess.run(subtitle_cmd, check=True, capture_output=True, encoding='utf-8', errors='replace')
+                
+                if os.path.exists(ass_subtitle):
+                    try:
+                        # 统一使用绝对路径+正斜杠
+                        safe_subtitle_path = os.path.abspath(ass_subtitle).replace('\\', '/')
+                        logger.debug(f"原始字幕路径: {ass_subtitle}")
+                        logger.debug(f"处理后路径 (1): {safe_subtitle_path}")
                         
-                        # 第二步：添加字幕
-                        logger.info("第二步：添加字幕...")
-                        
-                        # 使用特定参数处理字幕
-                        if params.subtitle_position == "top":
-                            position = "top"  # 顶部
-                        elif params.subtitle_position == "center":
-                            position = "center"  # 中间
-                        else:
-                            position = "bottom"  # 底部
-                            
-                        # 构建添加字幕的命令
-                        sub_cmd = [
-                            "ffmpeg", "-y",
-                            "-i", temp_video_path,
-                            "-i", subtitle_path,
-                            "-map", "0:v",
-                            "-map", "0:a",
-                            "-c:v", "libx264",
-                            "-preset", "medium",
-                            "-crf", "23",
-                            "-c:a", "copy",
-                            "-pix_fmt", "yuv420p"
-                        ]
-                        
-                        # 尝试将字幕直接添加为流 (不使用-map 1:s，因为可能某些字幕没有流)
-                        # 而是使用-vf subtitles选项
-                        if os.path.exists(subtitle_path):
-                            # 处理路径以便在Windows上正常工作
-                            safe_subtitle_path = subtitle_path.replace('\\', '/')
+                        # Windows特殊处理
+                        if os.name == "nt":
                             if ':' in safe_subtitle_path:
-                                safe_subtitle_path = safe_subtitle_path.replace(':', '\\\\:')
-                            sub_cmd.extend(["-vf", f"subtitles='{safe_subtitle_path}'"])
-                        
-                        # 完成命令
-                        sub_cmd.append(output_file)
-                        
-                        logger.info(f"字幕处理命令: {' '.join(sub_cmd)}")
-                        subprocess.run(sub_cmd, check=True, capture_output=True)
-                        
-                        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-                            logger.success("添加字幕成功")
-                            return output_file
+                                drive_part, path_part = safe_subtitle_path.split(':', 1)
+                                # 使用原始字符串r来处理反斜杠，避免f-string语法错误
+                                safe_subtitle_path = drive_part + r'\:' + path_part
+                                logger.debug(f"Windows路径处理 (2): {safe_subtitle_path}")
+                            
+                            # 包裹在单引号中 - 确保FFmpeg正确解析路径
+                            if not safe_subtitle_path.startswith("'") and not safe_subtitle_path.endswith("'"):
+                                safe_subtitle_path = f"'{safe_subtitle_path}'"
+                                logger.debug(f"添加引号 (3): {safe_subtitle_path}")
+                        # 其他系统直接引用
                         else:
-                            logger.error("添加字幕失败，尝试不带字幕生成")
-                    else:
-                        logger.error("视频和音频合并失败")
-                except subprocess.CalledProcessError as e:
-                    error_msg = e.stderr.decode('utf-8', errors='replace') if e.stderr else ''
-                    logger.error(f"字幕处理失败: {error_msg}")
+                            safe_subtitle_path = shlex.quote(safe_subtitle_path)
+                            logger.debug(f"非Windows路径处理: {safe_subtitle_path}")
+                        
+                        # 确保字体名称安全
+                        safe_font_name = params.font_name.replace(",", "\\,").replace(":", "\\:")
+                        
+                        # 确定字幕位置
+                        alignment = 2  # 默认底部居中
+                        if params.subtitle_position == "top":
+                            alignment = 8  # 顶部居中
+                        elif params.subtitle_position == "center":
+                            alignment = 5  # 中间居中
+                            
+                        # 计算垂直边距
+                        vertical_margin = 50
+                        
+                        # 构建字幕滤镜
+                        subtitle_filter = f"subtitles={safe_subtitle_path}:force_style='FontName={safe_font_name},FontSize={params.font_size},PrimaryColour=&H{params.text_fore_color[1:]}&,OutlineColour=&H{params.stroke_color[1:]}&,BorderStyle=1,Outline={params.stroke_width},Alignment={alignment},MarginV={vertical_margin}'"
+
+                        logger.info(f"字幕滤镜设置: {subtitle_filter}")
+                    except Exception as e:
+                        logger.error(f"字幕路径处理失败: {str(e)}")
+                        # 备选方案 - 简化处理，防止出错
+                        try:
+                            raw_path = ass_subtitle.replace('\\', '/')
+                            if os.name == "nt" and ":" in raw_path:
+                                # 最简单的处理方式
+                                drive, rest = raw_path.split(":", 1)
+                                raw_path = f"{drive}\\:{rest}"
+                            # 计算垂直边距
+                            vertical_margin = 50
+                            # 构建字幕滤镜
+                            subtitle_filter = f"subtitles='{raw_path}':force_style='FontName={params.font_name},FontSize={params.font_size},Alignment={alignment},MarginV={vertical_margin}'"
+                            logger.info(f"使用备选字幕滤镜: {subtitle_filter}")
+                        except Exception as e2:
+                            logger.error(f"备选字幕处理也失败: {str(e2)}")
+                            subtitle_filter = ""  # 失败时不添加字幕
+                    
+                    # 获取视频尺寸(用于日志记录和调试，不影响字幕处理)
+                    try:
+                        # 使用JSON格式获取视频尺寸
+                        json_cmd = [
+                            "ffprobe",
+                            "-v", "error",
+                            "-select_streams", "v:0",
+                            "-show_entries", "stream=width,height",
+                            "-of", "json",
+                            video_path
+                        ]
+                        json_result = subprocess.run(json_cmd, capture_output=True, encoding='utf-8', errors='replace', check=False).stdout
+                        video_info = json.loads(json_result)
+                        if "streams" in video_info and video_info["streams"]:
+                            width = int(video_info["streams"][0].get("width", 1080))
+                            height = int(video_info["streams"][0].get("height", 1920))
+                            logger.info(f"视频尺寸: {width}x{height}")
+                        else:
+                            logger.warning("未找到视频流信息")
+                    except Exception as e:
+                        logger.warning(f"获取视频尺寸失败: {str(e)}")
             except Exception as e:
                 logger.error(f"处理字幕时出错: {str(e)}")
-        
-        # 如果字幕处理部分没有成功，继续执行常规视频生成
-        logger.info("使用常规方式生成视频（无字幕）...")
-        
+                subtitle_filter = ""
+
         # 构建最终滤镜字符串
         filter_complex = []
         
@@ -564,6 +581,20 @@ def generate_video(
             # 如果已预处理，只添加必要的滤镜
             filter_complex.append("format=yuv420p")
         
+        # 添加字幕滤镜（如果有）
+        if subtitle_filter:
+            # 确保字幕滤镜格式正确，用单引号包围路径
+            if "subtitles=" in subtitle_filter and not "subtitles='" in subtitle_filter:
+                parts = subtitle_filter.split(':', 1)
+                if len(parts) == 2:
+                    path_part = parts[0]
+                    rest_part = parts[1]
+                    # 给路径加上单引号
+                    path_part = path_part.replace("subtitles=", "subtitles='") + "'"
+                    subtitle_filter = f"{path_part}:{rest_part}"
+            
+            filter_complex.append(subtitle_filter)
+
         # 最终合并视频、音频
         final_cmd = [
             "ffmpeg", "-y",
@@ -586,6 +617,7 @@ def generate_video(
             "-shortest",
             "-pix_fmt", "yuv420p",
             "-max_muxing_queue_size", "1024",  # 增加队列大小
+            "-movflags", "+faststart",  # 添加faststart标志提高流媒体兼容性
             output_file
         ])
         

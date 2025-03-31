@@ -1,0 +1,349 @@
+ "./app\controllers\v1\video.py:90": create_task - Task created: {
+    "task_id": "2fac082d-1122-4127-8717-e829cb05fe93",
+    "request_id": "191b3917-2eed-4063-91f2-4020c81d9dd7",
+    "params": {
+        "video_subject": "辣椒粉碎机",
+        "video_script": "90%老板都不知道，选对粉碎机，每年可省下几万甚至几十万！您是否还在为传统粉碎机粉碎不均、卡料、过热、效率低而头痛？片段1：看我们工厂研发的辣椒粉碎机 ，快速粉碎，颗粒均匀，省时省力！精细研磨200目，变频调速，智能控温，片段2：进料顺畅，操作简便，食品级不锈钢，一机多用，片段3：湖南食品厂客户见证：用了我们的辣椒粉碎机，生产 效率提升3倍，每年节省1万电费！厂家直销，限时送运费，0风险试用，满意再付款！评论区回复【粉碎机】，领取免费试机名额！",
+        "video_terms": "干辣椒粉碎机，食品级辣椒粉碎机，辣椒超细粉碎机，商用辣椒粉碎机，辣椒打粉机，辣椒磨粉机，辣椒进料设备，不锈钢辣椒粉碎机，省电辣椒粉碎机，三相电辣椒粉碎机，高效辣椒粉碎机，辣椒加工设备，辣椒研磨机，家用辣椒粉碎机，辣椒片粉碎机，辣椒专用粉碎机，粉碎辣椒机，辣椒粗粉机，辣椒制粉机，超细辣椒机。",
+        "video_aspect": "9:16",
+        "video_concat_mode": "sequential",
+        "video_transition_mode": "None",
+        "video_clip_duration": 10,
+        "video_count": 1,
+        "video_source": "local",
+        "video_materials": [
+            {
+                "provider": "local",
+                "url": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\mix_videos_task-1743386507404_83z72h0z\\video_task-1743386507404_000.mp4",
+                "duration": 0
+            },
+            {
+                "provider": "local",
+                "url": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\mix_videos_task-1743386507404_83z72h0z\\video_task-1743386507404_001.mp4",
+                "duration": 0
+            },
+            {
+                "provider": "local",
+                "url": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\mix_videos_task-1743386507404_83z72h0z\\video_task-1743386507404_002.mp4",
+                "duration": 0
+            }
+        ],
+        "video_language": "zh-CN",
+        "voice_name": "zh-CN-XiaoxiaoNeural",
+        "voice_volume": 1.0,
+        "voice_rate": 1.0,
+        "bgm_type": "random",
+        "bgm_file": "",
+        "bgm_volume": 1.0,
+        "subtitle_enabled": true,
+        "subtitle_position": "bottom",
+        "custom_position": 70.0,
+        "font_name": "MicrosoftYaHeiNormal.ttc",
+        "text_fore_color": "#FFFFFF",
+        "text_background_color": false,
+        "font_size": 8,
+        "stroke_color": "#000000",
+        "stroke_width": 1.5,
+        "n_threads": 4,
+        "paragraph_number": 1
+    }
+}
+2025-03-31 11:17:45 | INFO | "./app\services\task.py:212": start - start task: 2fac082d-1122-4127-8717-e829cb05fe93, stop_at: video
+2025-03-31 11:17:45 | INFO | "./app\services\task.py:17": generate_script -
+
+## generating video script
+2025-03-31 11:17:45 | DEBUG | "./app\services\task.py:26": generate_script - video script: 
+90%老板都不知道，选对粉碎机，每年可省下几万甚至几十万！您是否还在为传统粉碎机粉碎不均、卡料、过热、效率低而头痛？片段1：看我们工厂研发的辣椒粉碎机，快速粉碎，颗粒均匀，省时省力！精细研磨200目，变频调速，智能控温，片段2：进料顺畅，操作简便，食品级不锈钢，一机多用，片段3：湖南食品厂客户见证：用了我们的辣椒粉碎机，生产效率提升3倍，每年节省1万电 费！厂家直销，限时送运费，0风险试用，满意再付款！评论区回复【粉碎机】，领取免费试机名额！
+2025-03-31 11:17:45 | INFO | "./app\services\task.py:74": generate_audio -
+
+## generating audio
+2025-03-31 11:17:45 | INFO | "./app\services\voice.py:1083": azure_tts_v1 - start, voice name: zh-CN-XiaoxiaoNeural, try: 1
+2025-03-31 11:17:46 | INFO | "./app\services\voice.py:1103": azure_tts_v1 - completed, output file: G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\audio.mp3
+2025-03-31 11:17:46 | INFO | "./app\services\task.py:102": generate_subtitle - 
+
+## generating subtitle, provider: edge
+2025-03-31 11:17:46 | INFO | "./app\services\voice.py:1288": create_subtitle - completed, subtitle file created: G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\subtitle.srt, duration: 48.75
+2025-03-31 11:17:46 | INFO | "./app\services\task.py:128": get_video_materials -
+
+## preprocess local materials
+2025-03-31 11:17:46 | INFO | "./app\services\task.py:129": get_video_materials - params: video_subject='辣椒粉碎机' video_script='90%老板都不知道，选对粉碎机，每年可省下几 万甚至几十万！您是否还在为传统粉碎机粉碎不均、卡料、过热、效率低而头痛？片段1：看我们工厂研发的辣椒粉碎机，快速粉碎，颗粒均匀，省时省力！精细研磨200目，变频调速，智能控温，片段2：进料顺畅，操作简便，食品级不锈钢，一机多用，片段3：湖南食品厂客户见证：用了我们的辣椒粉碎机，生产效率提升3倍，每年节省1万电费！厂家直销，限时送运费，0风险试用，满意 再付款！评论区回复【粉碎机】，领取免费试机名额！' video_terms='干辣椒粉碎机，食品级辣椒粉碎机，辣椒超细粉碎机，商用辣椒粉碎机，辣椒打粉机，辣椒磨粉机，辣椒进料设备，不锈钢 辣椒粉碎机，省电辣椒粉碎机，三相电辣椒粉碎机，高效辣椒粉碎机，辣椒加工设备，辣椒研磨机，家用辣椒粉碎机，辣椒片粉碎机，辣椒专用粉碎机，粉碎辣椒机，辣椒粗粉机，辣椒制粉机，超细辣椒机。' video_aspect=<VideoAspect.portrait: '9:16'> video_concat_mode=<VideoConcatMode.sequential: 'sequential'> video_transition_mode=<VideoTransitionMode.none: 'None'> video_clip_duration=10 video_count=1 video_source='local' video_materials=[MaterialInfo(provider='local', url='C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\mix_videos_task-1743386507404_83z72h0z\\video_task-1743386507404_000.mp4', duration=0), MaterialInfo(provider='local', url='C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\mix_videos_task-1743386507404_83z72h0z\\video_task-1743386507404_001.mp4', duration=0), MaterialInfo(provider='local', url='C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\mix_videos_task-1743386507404_83z72h0z\\video_task-1743386507404_002.mp4', duration=0)] video_language='zh-CN' voice_name='zh-CN-XiaoxiaoNeural' voice_volume=1.0 voice_rate=1.0 bgm_type='random' bgm_file='' bgm_volume=1.0 subtitle_enabled=True subtitle_position='bottom' custom_position=70.0 font_name='MicrosoftYaHeiNormal.ttc' text_fore_color='#FFFFFF' text_background_color=False font_size=8 stroke_color='#000000' stroke_width=1.5 n_threads=4 paragraph_number=1
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:218": _process_materials - 视频处理使用编码器: h264_nvenc
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:231": _process_materials - 处理素材 [1/3]: video_task-1743386507404_000.mp4
+2025-03-31 11:17:46 | INFO | "./app\services\video_metadata.py:245": get_video_metadata - 🎬 获取视频完整元数据 | 路径: C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_000.mp4
+2025-03-31 11:17:46 | DEBUG | "./app\services\cache_manager.py:67": generate_key - 生成缓存键: video:metadata:6fadf51d09d97b117ec6d929a9be2df2 (基于 video_task-1743386507404_000.mp4)
+2025-03-31 11:17:46 | INFO | "./app\services\cache_manager.py:103": get_metadata - ❗ 缓存未命中: video_task-1743386507404_000.mp4
+2025-03-31 11:17:46 | INFO | "./app\services\video_metadata.py:267": get_video_metadata - ✅ 使用MediaInfo获取视频元数据
+2025-03-31 11:17:46 | DEBUG | "./app\services\mediainfo.py:48": _execute_mediainfo - 🔍 执行命令: mediainfo --Output=JSON C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_000.mp4
+2025-03-31 11:17:46 | INFO | "./app\services\mediainfo.py:170": get_basic_metadata - 🎬 MediaInfo基本元数据获取成功: 宽=3840, 高=2160, 旋转=90°, 编码=hevc
+2025-03-31 11:17:46 | DEBUG | "./app\services\mediainfo.py:48": _execute_mediainfo - 🔍 执行命令: mediainfo --Output=JSON C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_000.mp4
+2025-03-31 11:17:46 | INFO | "./app\services\mediainfo.py:261": get_detailed_metadata - 🎬 MediaInfo详细元数据获取成功: 帧率=60.00fps, 时长=32.03秒
+2025-03-31 11:17:46 | DEBUG | "./app\services\cache_manager.py:67": generate_key - 生成缓存键: video:metadata:6fadf51d09d97b117ec6d929a9be2df2 (基于 video_task-1743386507404_000.mp4)
+2025-03-31 11:17:46 | INFO | "./app\services\cache_manager.py:133": set_metadata - ✅ 元数据已写入内存缓存: video_task-1743386507404_000.mp4
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:373": _determine_processing_needs - 标准化旋转角度: 90°
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:379": _determine_processing_needs - 检测到旋转视频：实际尺寸3840x2160，有效尺寸2160x3840
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:411": _determine_processing_needs - 检测到视频旋转90°，将使用物理旋转
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:416": _determine_processing_needs - 竖屏旋转内容提升20%码率以补偿细节损失
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:422": _determine_processing_needs - 需要编码转换: hevc -> h264
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:443": _determine_processing_needs - 4K视频内容提升50%码率以保持画质
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:445": _determine_processing_needs - 视频处理配置: {'needs_processing': True, 'needs_rotation': True, 'needs_scaling': True, 'needs_padding': False, 'needs_encoding': True, 'needs_antialias': True, 'target_width': 1080, 'target_height': 1920, 'is_high_quality': True, 'is_4k': True, 'bitrate_boost': 1.7999999999999998}
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:593": _build_filter_string - 应用smartblur滤镜防止旋转引起的锯齿
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:616": _build_filter_string - 应用精确缩放: 3840x2160 -> 1080x1920
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:625": _build_filter_string - 最终滤镜串: smartblur=3:0.8:0,scale=1080:1920:flags=lanczos,format=yuv420p    
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:464": _execute_video_processing - 使用NVENC编码，进行GPU兼容性检查...
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:479": _execute_video_processing - 使用简化NVIDIA硬件加速设置
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:816": _sanitize_gpu_params - 优化h264_nvenc参数: {'preset': 'p2', 'tune': 'hq'}
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:653": _build_ffmpeg_command - 应用码率提升: 30000k -> 53999k (x1.80)
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:687": _build_ffmpeg_command - FFMPEG命令: ffmpeg -y -hwaccel cuda -i C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_000.mp4 -vf smartblur=3:0.8:0,scale=1080:1920:flags=lanczos,format=yuv420p -c:v h264_nvenc -b:v 53999k -maxrate 80999k -bufsize 107999k -preset p2 -tune hq -c:a aac -b:a 128k -metadata:s:v rotate=0 -metadata:s:v:0 rotate=0 C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_000_processed.mp4
+2025-03-31 11:17:46 | INFO | "./app\services\preprocess_video.py:700": _run_ffmpeg_command - 使用编码器 h264_nvenc 执行命令
+2025-03-31 11:17:46 | DEBUG | "./app\services\preprocess_video.py:701": _run_ffmpeg_command - 完整命令: ffmpeg -y -hwaccel cuda -i C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_000.mp4 -vf smartblur=3:0.8:0,scale=1080:1920:flags=lanczos,format=yuv420p -c:v h264_nvenc -b:v 53999k -maxrate 80999k -bufsize 107999k -preset p2 -tune hq -c:a aac -b:a 128k -metadata:s:v rotate=0 -metadata:s:v:0 rotate=0 C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_000_processed.mp4
+2025-03-31 11:17:47 | INFO | "./app\services\preprocess_video.py:723": _run_ffmpeg_command - 处理进度: frame=   24 fps=0.0 q=11.0 size=    2304KiB time=00:00:00.40 bitrate=47186.9kbits/s speed=0.764x
+2025-03-31 11:17:48 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=   68 fps= 66 q=11.0 size=    6912KiB time=00:00:01.13 bitrate=49961.9kbits/s speed= 1.1x
+2025-03-31 11:17:48 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  114 fps= 73 q=11.0 size=   11776KiB time=00:00:01.90 bitrate=50773.4kbits/s speed=1.22x
+2025-03-31 11:17:49 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  157 fps= 76 q=12.0 size=   17920KiB time=00:00:02.61 bitrate=56102.3kbits/s speed=1.27x
+2025-03-31 11:17:50 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  202 fps= 78 q=14.0 size=   24576KiB time=00:00:03.36 bitrate=59800.1kbits/s speed= 1.3x
+2025-03-31 11:17:50 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  246 fps= 79 q=14.0 size=   30720KiB time=00:00:04.10 bitrate=61380.2kbits/s speed=1.32x
+2025-03-31 11:17:51 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  289 fps= 80 q=14.0 size=   36352KiB time=00:00:04.81 bitrate=61826.1kbits/s speed=1.33x
+2025-03-31 11:17:51 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  333 fps= 80 q=14.0 size=   39936KiB time=00:00:05.55 bitrate=58947.0kbits/s speed=1.34x
+2025-03-31 11:17:52 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  377 fps= 81 q=13.0 size=   43008KiB time=00:00:06.28 bitrate=56072.5kbits/s speed=1.35x
+2025-03-31 11:17:52 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  420 fps= 81 q=12.0 size=   46336KiB time=00:00:07.00 bitrate=54226.4kbits/s speed=1.35x
+2025-03-31 11:17:53 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  463 fps= 81 q=12.0 size=   49408KiB time=00:00:07.71 bitrate=52451.5kbits/s speed=1.36x
+2025-03-31 11:17:53 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  506 fps= 81 q=11.0 size=   53504KiB time=00:00:08.43 bitrate=51972.9kbits/s speed=1.36x
+2025-03-31 11:17:54 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  549 fps= 82 q=11.0 size=   57856KiB time=00:00:09.15 bitrate=51798.6kbits/s speed=1.36x
+2025-03-31 11:17:54 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  591 fps= 82 q=10.0 size=   61696KiB time=00:00:09.85 bitrate=51311.1kbits/s speed=1.36x
+2025-03-31 11:17:55 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  635 fps= 82 q=11.0 size=   66048KiB time=00:00:10.58 bitrate=51124.3kbits/s speed=1.36x
+2025-03-31 11:17:55 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  678 fps= 82 q=11.0 size=   70912KiB time=00:00:11.30 bitrate=51408.1kbits/s speed=1.37x
+2025-03-31 11:17:56 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  720 fps= 82 q=10.0 size=   75520KiB time=00:00:12.00 bitrate=51555.0kbits/s speed=1.37x
+2025-03-31 11:17:56 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  762 fps= 82 q=10.0 size=   79616KiB time=00:00:12.70 bitrate=51355.5kbits/s speed=1.36x
+2025-03-31 11:17:57 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  805 fps= 82 q=11.0 size=   83968KiB time=00:00:13.40 bitrate=51333.3kbits/s speed=1.36x
+2025-03-31 11:17:57 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  847 fps= 82 q=11.0 size=   89600KiB time=00:00:14.11 bitrate=51995.5kbits/s speed=1.37x
+2025-03-31 11:17:58 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  891 fps= 82 q=12.0 size=   95744KiB time=00:00:14.85 bitrate=52817.2kbits/s speed=1.37x
+2025-03-31 11:17:58 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  933 fps= 82 q=12.0 size=  101888KiB time=00:00:15.55 bitrate=53676.3kbits/s speed=1.37x
+2025-03-31 11:17:59 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  976 fps= 82 q=14.0 size=  108544KiB time=00:00:16.26 bitrate=54663.5kbits/s speed=1.37x
+2025-03-31 11:17:59 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1021 fps= 82 q=14.0 size=  116224KiB time=00:00:17.03 bitrate=55896.7kbits/s speed=1.37x
+2025-03-31 11:18:00 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1065 fps= 82 q=15.0 size=  123648KiB time=00:00:17.76 bitrate=57012.7kbits/s speed=1.38x
+2025-03-31 11:18:00 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1109 fps= 83 q=15.0 size=  129536KiB time=00:00:18.50 bitrate=57360.0kbits/s speed=1.38x
+2025-03-31 11:18:01 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1155 fps= 83 q=15.0 size=  135680KiB time=00:00:19.26 bitrate=57689.8kbits/s speed=1.38x
+2025-03-31 11:18:01 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1199 fps= 83 q=15.0 size=  140544KiB time=00:00:20.00 bitrate=57566.8kbits/s speed=1.38x
+2025-03-31 11:18:02 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1242 fps= 83 q=15.0 size=  145152KiB time=00:00:20.71 bitrate=57397.5kbits/s speed=1.38x
+2025-03-31 11:18:02 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1286 fps= 83 q=15.0 size=  150272KiB time=00:00:21.45 bitrate=57390.6kbits/s speed=1.39x
+2025-03-31 11:18:03 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1331 fps= 83 q=15.0 size=  154880KiB time=00:00:22.20 bitrate=57152.1kbits/s speed=1.39x
+2025-03-31 11:18:03 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1375 fps= 83 q=15.0 size=  159232KiB time=00:00:22.93 bitrate=56879.2kbits/s speed=1.39x
+2025-03-31 11:18:04 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1419 fps= 83 q=15.0 size=  163072KiB time=00:00:23.66 bitrate=56445.9kbits/s speed=1.39x
+2025-03-31 11:18:04 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1462 fps= 83 q=14.0 size=  167168KiB time=00:00:24.38 bitrate=56163.0kbits/s speed=1.39x
+2025-03-31 11:18:05 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1506 fps= 83 q=14.0 size=  171776KiB time=00:00:25.11 bitrate=56026.1kbits/s speed=1.39x
+2025-03-31 11:18:05 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1551 fps= 83 q=14.0 size=  176640KiB time=00:00:25.86 bitrate=55942.1kbits/s speed=1.39x
+2025-03-31 11:18:06 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1594 fps= 83 q=14.0 size=  181760KiB time=00:00:26.58 bitrate=56011.7kbits/s speed=1.39x
+2025-03-31 11:18:07 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1640 fps= 84 q=14.0 size=  187136KiB time=00:00:27.35 bitrate=56051.9kbits/s speed=1.39x
+2025-03-31 11:18:07 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1684 fps= 84 q=14.0 size=  192000KiB time=00:00:28.08 bitrate=56007.0kbits/s speed= 1.4x
+2025-03-31 11:18:08 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1729 fps= 84 q=14.0 size=  197120KiB time=00:00:28.83 bitrate=56004.9kbits/s speed= 1.4x
+2025-03-31 11:18:08 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1773 fps= 84 q=14.0 size=  201472KiB time=00:00:29.56 bitrate=55821.6kbits/s speed= 1.4x
+2025-03-31 11:18:09 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1818 fps= 84 q=14.0 size=  205568KiB time=00:00:30.31 bitrate=55547.4kbits/s speed= 1.4x
+2025-03-31 11:18:09 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1864 fps= 84 q=14.0 size=  209664KiB time=00:00:31.08 bitrate=55256.9kbits/s speed= 1.4x
+2025-03-31 11:18:09 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1908 fps= 84 q=14.0 size=  213760KiB time=00:00:31.81 bitrate=55037.9kbits/s speed= 1.4x
+2025-03-31 11:18:09 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1921 fps= 84 q=14.0 Lsize=  215346KiB time=00:00:32.03 bitrate=55071.2kbits/s speed= 1.4x
+2025-03-31 11:18:09 | INFO | "./app\services\preprocess_video.py:751": _run_ffmpeg_command - 命令执行成功，使用编码器: h264_nvenc
+2025-03-31 11:18:09 | SUCCESS | "./app\services\preprocess_video.py:556": _execute_video_processing - 视频处理成功: video_task-1743386507404_000_processed.mp4
+2025-03-31 11:18:09 | INFO | "./app\services\preprocess_video.py:231": _process_materials - 处理素材 [2/3]: video_task-1743386507404_001.mp4
+2025-03-31 11:18:09 | INFO | "./app\services\video_metadata.py:245": get_video_metadata - 🎬 获取视频完整元数据 | 路径: C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_001.mp4
+2025-03-31 11:18:09 | DEBUG | "./app\services\cache_manager.py:67": generate_key - 生成缓存键: video:metadata:63ed2b2778e8212a09d42101513bacf8 (基于 video_task-1743386507404_001.mp4)
+2025-03-31 11:18:09 | INFO | "./app\services\cache_manager.py:103": get_metadata - ❗ 缓存未命中: video_task-1743386507404_001.mp4
+2025-03-31 11:18:09 | INFO | "./app\services\video_metadata.py:267": get_video_metadata - ✅ 使用MediaInfo获取视频元数据
+2025-03-31 11:18:09 | DEBUG | "./app\services\mediainfo.py:48": _execute_mediainfo - 🔍 执行命令: mediainfo --Output=JSON C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_001.mp4
+2025-03-31 11:18:09 | INFO | "./app\services\mediainfo.py:170": get_basic_metadata - 🎬 MediaInfo基本元数据获取成功: 宽=3840, 高=2160, 旋转=90°, 编码=hevc
+2025-03-31 11:18:09 | DEBUG | "./app\services\mediainfo.py:48": _execute_mediainfo - 🔍 执行命令: mediainfo --Output=JSON C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_001.mp4
+2025-03-31 11:18:09 | INFO | "./app\services\mediainfo.py:261": get_detailed_metadata - 🎬 MediaInfo详细元数据获取成功: 帧率=60.00fps, 时长=4.15秒
+2025-03-31 11:18:09 | DEBUG | "./app\services\cache_manager.py:67": generate_key - 生成缓存键: video:metadata:63ed2b2778e8212a09d42101513bacf8 (基于 video_task-1743386507404_001.mp4)
+2025-03-31 11:18:09 | INFO | "./app\services\cache_manager.py:133": set_metadata - ✅ 元数据已写入内存缓存: video_task-1743386507404_001.mp4
+2025-03-31 11:18:09 | INFO | "./app\services\preprocess_video.py:373": _determine_processing_needs - 标准化旋转角度: 90°
+2025-03-31 11:18:09 | INFO | "./app\services\preprocess_video.py:379": _determine_processing_needs - 检测到旋转视频：实际尺寸3840x2160，有效尺寸2160x3840
+2025-03-31 11:18:09 | INFO | "./app\services\preprocess_video.py:411": _determine_processing_needs - 检测到视频旋转90°，将使用物理旋转
+2025-03-31 11:18:09 | INFO | "./app\services\preprocess_video.py:416": _determine_processing_needs - 竖屏旋转内容提升20%码率以补偿细节损失
+2025-03-31 11:18:09 | INFO | "./app\services\preprocess_video.py:422": _determine_processing_needs - 需要编码转换: hevc -> h264
+2025-03-31 11:18:09 | INFO | "./app\services\preprocess_video.py:443": _determine_processing_needs - 4K视频内容提升50%码率以保持画质
+2025-03-31 11:18:09 | INFO | "./app\services\preprocess_video.py:445": _determine_processing_needs - 视频处理配置: {'needs_processing': True, 'needs_rotation': True, 'needs_scaling': True, 'needs_padding': False, 'needs_encoding': True, 'needs_antialias': True, 'target_width': 1080, 'target_height': 1920, 'is_high_quality': True, 'is_4k': True, 'bitrate_boost': 1.7999999999999998}
+2025-03-31 11:18:09 | INFO | "./app\services\preprocess_video.py:593": _build_filter_string - 应用smartblur滤镜防止旋转引起的锯齿
+2025-03-31 11:18:09 | INFO | "./app\services\preprocess_video.py:616": _build_filter_string - 应用精确缩放: 3840x2160 -> 1080x1920
+2025-03-31 11:18:09 | INFO | "./app\services\preprocess_video.py:625": _build_filter_string - 最终滤镜串: smartblur=3:0.8:0,scale=1080:1920:flags=lanczos,format=yuv420p    
+2025-03-31 11:18:09 | INFO | "./app\services\preprocess_video.py:464": _execute_video_processing - 使用NVENC编码，进行GPU兼容性检查...
+2025-03-31 11:18:10 | INFO | "./app\services\preprocess_video.py:479": _execute_video_processing - 使用简化NVIDIA硬件加速设置
+2025-03-31 11:18:10 | INFO | "./app\services\preprocess_video.py:816": _sanitize_gpu_params - 优化h264_nvenc参数: {'preset': 'p2', 'tune': 'hq'}
+2025-03-31 11:18:10 | INFO | "./app\services\preprocess_video.py:653": _build_ffmpeg_command - 应用码率提升: 30000k -> 53999k (x1.80)
+2025-03-31 11:18:10 | INFO | "./app\services\preprocess_video.py:687": _build_ffmpeg_command - FFMPEG命令: ffmpeg -y -hwaccel cuda -i C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_001.mp4 -vf smartblur=3:0.8:0,scale=1080:1920:flags=lanczos,format=yuv420p -c:v h264_nvenc -b:v 53999k -maxrate 80999k -bufsize 107999k -preset p2 -tune hq -c:a aac -b:a 128k -metadata:s:v rotate=0 -metadata:s:v:0 rotate=0 C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_001_processed.mp4
+2025-03-31 11:18:10 | INFO | "./app\services\preprocess_video.py:700": _run_ffmpeg_command - 使用编码器 h264_nvenc 执行命令
+2025-03-31 11:18:10 | DEBUG | "./app\services\preprocess_video.py:701": _run_ffmpeg_command - 完整命令: ffmpeg -y -hwaccel cuda -i C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_001.mp4 -vf smartblur=3:0.8:0,scale=1080:1920:flags=lanczos,format=yuv420p -c:v h264_nvenc -b:v 53999k -maxrate 80999k -bufsize 107999k -preset p2 -tune hq -c:a aac -b:a 128k -metadata:s:v rotate=0 -metadata:s:v:0 rotate=0 C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_001_processed.mp4
+2025-03-31 11:18:11 | INFO | "./app\services\preprocess_video.py:723": _run_ffmpeg_command - 处理进度: frame=   26 fps=0.0 q=11.0 size=    2304KiB time=00:00:00.43 bitrate=43557.2kbits/s speed=0.831x
+2025-03-31 11:18:11 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=   73 fps= 71 q=11.0 size=    6144KiB time=00:00:01.21 bitrate=41368.8kbits/s speed=1.18x
+2025-03-31 11:18:12 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  121 fps= 78 q=10.0 size=   10496KiB time=00:00:02.01 bitrate=42636.5kbits/s speed= 1.3x
+2025-03-31 11:18:12 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  169 fps= 82 q=10.0 size=   15616KiB time=00:00:02.81 bitrate=45417.7kbits/s speed=1.36x
+2025-03-31 11:18:13 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  215 fps= 83 q=10.0 size=   19968KiB time=00:00:03.58 bitrate=45649.7kbits/s speed=1.39x
+2025-03-31 11:18:13 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  249 fps= 85 q=10.0 Lsize=   24024KiB time=00:00:04.15 bitrate=47423.8kbits/s speed=1.42x
+2025-03-31 11:18:13 | INFO | "./app\services\preprocess_video.py:751": _run_ffmpeg_command - 命令执行成功，使用编码器: h264_nvenc
+2025-03-31 11:18:13 | SUCCESS | "./app\services\preprocess_video.py:556": _execute_video_processing - 视频处理成功: video_task-1743386507404_001_processed.mp4
+2025-03-31 11:18:13 | INFO | "./app\services\preprocess_video.py:231": _process_materials - 处理素材 [3/3]: video_task-1743386507404_002.mp4
+2025-03-31 11:18:13 | INFO | "./app\services\video_metadata.py:245": get_video_metadata - 🎬 获取视频完整元数据 | 路径: C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_002.mp4
+2025-03-31 11:18:13 | DEBUG | "./app\services\cache_manager.py:67": generate_key - 生成缓存键: video:metadata:31da7f909a374585ade397cd6b21b3f0 (基于 video_task-1743386507404_002.mp4)
+2025-03-31 11:18:13 | INFO | "./app\services\cache_manager.py:103": get_metadata - ❗ 缓存未命中: video_task-1743386507404_002.mp4
+2025-03-31 11:18:13 | INFO | "./app\services\video_metadata.py:267": get_video_metadata - ✅ 使用MediaInfo获取视频元数据
+2025-03-31 11:18:13 | DEBUG | "./app\services\mediainfo.py:48": _execute_mediainfo - 🔍 执行命令: mediainfo --Output=JSON C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_002.mp4
+2025-03-31 11:18:13 | INFO | "./app\services\mediainfo.py:170": get_basic_metadata - 🎬 MediaInfo基本元数据获取成功: 宽=1920, 高=1080, 旋转=270°, 编码=avc
+2025-03-31 11:18:13 | DEBUG | "./app\services\mediainfo.py:48": _execute_mediainfo - 🔍 执行命令: mediainfo --Output=JSON C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_002.mp4
+2025-03-31 11:18:13 | INFO | "./app\services\mediainfo.py:261": get_detailed_metadata - 🎬 MediaInfo详细元数据获取成功: 帧率=59.26fps, 时长=42.56秒
+2025-03-31 11:18:13 | DEBUG | "./app\services\cache_manager.py:67": generate_key - 生成缓存键: video:metadata:31da7f909a374585ade397cd6b21b3f0 (基于 video_task-1743386507404_002.mp4)
+2025-03-31 11:18:13 | INFO | "./app\services\cache_manager.py:133": set_metadata - ✅ 元数据已写入内存缓存: video_task-1743386507404_002.mp4
+2025-03-31 11:18:13 | INFO | "./app\services\preprocess_video.py:373": _determine_processing_needs - 标准化旋转角度: 270°
+2025-03-31 11:18:13 | INFO | "./app\services\preprocess_video.py:379": _determine_processing_needs - 检测到旋转视频：实际尺寸1920x1080，有效尺寸1080x1920
+2025-03-31 11:18:13 | INFO | "./app\services\preprocess_video.py:411": _determine_processing_needs - 检测到视频旋转270°，将使用物理旋转
+2025-03-31 11:18:13 | INFO | "./app\services\preprocess_video.py:416": _determine_processing_needs - 竖屏旋转内容提升20%码率以补偿细节损失
+2025-03-31 11:18:13 | INFO | "./app\services\preprocess_video.py:422": _determine_processing_needs - 需要编码转换: avc -> h264
+2025-03-31 11:18:13 | INFO | "./app\services\preprocess_video.py:445": _determine_processing_needs - 视频处理配置: {'needs_processing': True, 'needs_rotation': True, 'needs_scaling': False, 'needs_padding': False, 'needs_encoding': True, 'needs_antialias': True, 'target_width': 1080, 'target_height': 1920, 'is_high_quality': True, 'is_4k': False, 'bitrate_boost': 1.2}
+2025-03-31 11:18:13 | INFO | "./app\services\preprocess_video.py:593": _build_filter_string - 应用smartblur滤镜防止旋转引起的锯齿
+2025-03-31 11:18:13 | INFO | "./app\services\preprocess_video.py:625": _build_filter_string - 最终滤镜串: smartblur=3:0.8:0,format=yuv420p
+2025-03-31 11:18:13 | INFO | "./app\services\preprocess_video.py:464": _execute_video_processing - 使用NVENC编码，进行GPU兼容性检查...
+2025-03-31 11:18:13 | INFO | "./app\services\preprocess_video.py:479": _execute_video_processing - 使用简化NVIDIA硬件加速设置
+2025-03-31 11:18:13 | INFO | "./app\services\preprocess_video.py:816": _sanitize_gpu_params - 优化h264_nvenc参数: {'preset': 'p2', 'tune': 'hq'}
+2025-03-31 11:18:13 | INFO | "./app\services\preprocess_video.py:653": _build_ffmpeg_command - 应用码率提升: 15000k -> 18000k (x1.20)
+2025-03-31 11:18:13 | INFO | "./app\services\preprocess_video.py:687": _build_ffmpeg_command - FFMPEG命令: ffmpeg -y -hwaccel cuda -i C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_002.mp4 -vf smartblur=3:0.8:0,format=yuv420p -c:v h264_nvenc -b:v 18000k -maxrate 27000k -bufsize 36000k -preset p2 -tune hq -c:a aac -b:a 128k -metadata:s:v rotate=0 -metadata:s:v:0 rotate=0 C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_002_processed.mp4
+2025-03-31 11:18:13 | INFO | "./app\services\preprocess_video.py:700": _run_ffmpeg_command - 使用编码器 h264_nvenc 执行命令
+2025-03-31 11:18:13 | DEBUG | "./app\services\preprocess_video.py:701": _run_ffmpeg_command - 完整命令: ffmpeg -y -hwaccel cuda -i C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_002.mp4 -vf smartblur=3:0.8:0,format=yuv420p -c:v h264_nvenc -b:v 18000k -maxrate 27000k -bufsize 36000k -preset p2 -tune hq -c:a aac -b:a 128k -metadata:s:v rotate=0 -metadata:s:v:0 rotate=0 C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_002_processed.mp4
+2025-03-31 11:18:14 | INFO | "./app\services\preprocess_video.py:723": _run_ffmpeg_command - 处理进度: frame=  198 fps=0.0 q=13.0 size=    8704KiB time=00:00:03.30 bitrate=21585.6kbits/s speed=6.48x
+2025-03-31 11:18:15 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  427 fps=419 q=17.0 size=   18176KiB time=00:00:07.12 bitrate=20901.6kbits/s speed=6.99x
+2025-03-31 11:18:15 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  656 fps=426 q=15.0 size=   26112KiB time=00:00:10.94 bitrate=19545.4kbits/s speed=7.11x
+2025-03-31 11:18:16 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame=  884 fps=432 q=15.0 size=   34560KiB time=00:00:14.74 bitrate=19196.8kbits/s speed= 7.2x
+2025-03-31 11:18:16 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1120 fps=435 q=15.0 size=   43264KiB time=00:00:18.68 bitrate=18967.8kbits/s speed=7.26x
+2025-03-31 11:18:17 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1347 fps=437 q=16.0 size=   51712KiB time=00:00:22.47 bitrate=18850.9kbits/s speed=7.29x
+2025-03-31 11:18:17 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1582 fps=439 q=17.0 size=   61440KiB time=00:00:26.39 bitrate=19070.1kbits/s speed=7.32x
+2025-03-31 11:18:18 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 1809 fps=440 q=17.0 size=   69888KiB time=00:00:30.18 bitrate=18970.2kbits/s speed=7.34x
+2025-03-31 11:18:18 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 2044 fps=441 q=17.0 size=   78336KiB time=00:00:34.10 bitrate=18818.6kbits/s speed=7.36x
+2025-03-31 11:18:19 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 2271 fps=442 q=15.0 size=   85760KiB time=00:00:37.88 bitrate=18542.8kbits/s speed=7.37x
+2025-03-31 11:18:19 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 2505 fps=442 q=15.0 size=   93952KiB time=00:00:41.79 bitrate=18416.4kbits/s speed=7.38x
+2025-03-31 11:18:19 | DEBUG | "./app\services\preprocess_video.py:726": _run_ffmpeg_command - 进度: frame= 2522 fps=443 q=14.0 Lsize=   94704KiB time=00:00:42.07 bitrate=18438.7kbits/s speed=7.38x
+2025-03-31 11:18:19 | INFO | "./app\services\preprocess_video.py:751": _run_ffmpeg_command - 命令执行成功，使用编码器: h264_nvenc
+2025-03-31 11:18:19 | SUCCESS | "./app\services\preprocess_video.py:556": _execute_video_processing - 视频处理成功: video_task-1743386507404_002_processed.mp4
+2025-03-31 11:18:19 | INFO | "./app\services\preprocess_video.py:260": _process_materials - 视频处理完成: 总计3个, 成功3个, 失败0个, 跳过0个
+2025-03-31 11:18:19 | INFO | "./app\services\task.py:176": generate_final_videos -
+
+## combining video: 1 => G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\combined-1.mp4
+2025-03-31 11:18:19 | INFO | "./app\services\video.py:84": combine_videos - 使用纯ffmpeg方法合并视频
+2025-03-31 11:18:19 | INFO | "./app\services\video.py:106": combine_videos - 音频时长: 49.344 秒
+2025-03-31 11:18:19 | INFO | "./app\services\video.py:111": combine_videos - 目标视频分辨率: 1080x1920
+2025-03-31 11:18:19 | INFO | "./app\services\video.py:167": combine_videos - 处理视频 1/3: video_task-1743386507404_000_processed.mp4
+2025-03-31 11:18:19 | INFO | "./app\services\video_metadata.py:245": get_video_metadata - 🎬 获取视频完整元数据 | 路径: C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_000_processed.mp4
+2025-03-31 11:18:19 | DEBUG | "./app\services\cache_manager.py:67": generate_key - 生成缓存键: video:metadata:e36f6e956bfe3e4930a4125c43a67360 (基于 video_task-1743386507404_000_processed.mp4)
+2025-03-31 11:18:19 | INFO | "./app\services\cache_manager.py:103": get_metadata - ❗ 缓存未命中: video_task-1743386507404_000_processed.mp4
+2025-03-31 11:18:19 | INFO | "./app\services\video_metadata.py:267": get_video_metadata - ✅ 使用MediaInfo获取视频元数据
+2025-03-31 11:18:19 | DEBUG | "./app\services\mediainfo.py:48": _execute_mediainfo - 🔍 执行命令: mediainfo --Output=JSON C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_000_processed.mp4
+2025-03-31 11:18:19 | INFO | "./app\services\mediainfo.py:170": get_basic_metadata - 🎬 MediaInfo基本元数据获取成功: 宽=1080, 高=1920, 旋转=0°, 编码=avc
+2025-03-31 11:18:19 | DEBUG | "./app\services\mediainfo.py:48": _execute_mediainfo - 🔍 执行命令: mediainfo --Output=JSON C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_000_processed.mp4
+2025-03-31 11:18:19 | INFO | "./app\services\mediainfo.py:261": get_detailed_metadata - 🎬 MediaInfo详细元数据获取成功: 帧率=59.94fps, 时长=32.04秒
+2025-03-31 11:18:19 | DEBUG | "./app\services\cache_manager.py:67": generate_key - 生成缓存键: video:metadata:e36f6e956bfe3e4930a4125c43a67360 (基于 video_task-1743386507404_000_processed.mp4)
+2025-03-31 11:18:19 | INFO | "./app\services\cache_manager.py:133": set_metadata - ✅ 元数据已写入内存缓存: video_task-1743386507404_000_processed.mp4
+2025-03-31 11:18:19 | INFO | "./app\services\video.py:182": combine_videos - 视频信息: 宽=1080, 高=1920, 编码=avc, 旋转=0°
+2025-03-31 11:18:19 | INFO | "./app\services\video.py:201": combine_videos - 视频帧率: 60.0fps
+2025-03-31 11:18:19 | INFO | "./app\services\video.py:313": combine_videos - 片段处理命令: ffmpeg -y -ss 0 -i C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_000_processed.mp4 -t 10 -vf scale=1080:1920:force_original_aspect_ratio=1,crop=1080:1920:0:0,format=yuv420p -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -pix_fmt yuv420p G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\temp_combine_9096a943-e669-431a-a1aa-eae0e39bd899\segment_000.mp4
+2025-03-31 11:18:22 | INFO | "./app\services\video.py:345": combine_videos - 创建视频片段: G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\temp_combine_9096a943-e669-431a-a1aa-eae0e39bd899\segment_000.mp4, 时长: 10.00秒
+2025-03-31 11:18:22 | INFO | "./app\services\video.py:167": combine_videos - 处理视频 2/3: video_task-1743386507404_001_processed.mp4
+2025-03-31 11:18:22 | INFO | "./app\services\video_metadata.py:245": get_video_metadata - 🎬 获取视频完整元数据 | 路径: C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_001_processed.mp4
+2025-03-31 11:18:22 | DEBUG | "./app\services\cache_manager.py:67": generate_key - 生成缓存键: video:metadata:8021403dfae80e3fff10638898f2bc0e (基于 video_task-1743386507404_001_processed.mp4)
+2025-03-31 11:18:22 | INFO | "./app\services\cache_manager.py:103": get_metadata - ❗ 缓存未命中: video_task-1743386507404_001_processed.mp4
+2025-03-31 11:18:22 | INFO | "./app\services\video_metadata.py:267": get_video_metadata - ✅ 使用MediaInfo获取视频元数据
+2025-03-31 11:18:22 | DEBUG | "./app\services\mediainfo.py:48": _execute_mediainfo - 🔍 执行命令: mediainfo --Output=JSON C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_001_processed.mp4
+2025-03-31 11:18:22 | INFO | "./app\services\mediainfo.py:170": get_basic_metadata - 🎬 MediaInfo基本元数据获取成功: 宽=1080, 高=1920, 旋转=0°, 编码=avc
+2025-03-31 11:18:22 | DEBUG | "./app\services\mediainfo.py:48": _execute_mediainfo - 🔍 执行命令: mediainfo --Output=JSON C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_001_processed.mp4
+2025-03-31 11:18:22 | INFO | "./app\services\mediainfo.py:261": get_detailed_metadata - 🎬 MediaInfo详细元数据获取成功: 帧率=60.00fps, 时长=4.16秒
+2025-03-31 11:18:22 | DEBUG | "./app\services\cache_manager.py:67": generate_key - 生成缓存键: video:metadata:8021403dfae80e3fff10638898f2bc0e (基于 video_task-1743386507404_001_processed.mp4)
+2025-03-31 11:18:22 | INFO | "./app\services\cache_manager.py:133": set_metadata - ✅ 元数据已写入内存缓存: video_task-1743386507404_001_processed.mp4
+2025-03-31 11:18:22 | INFO | "./app\services\video.py:182": combine_videos - 视频信息: 宽=1080, 高=1920, 编码=avc, 旋转=0°
+2025-03-31 11:18:22 | INFO | "./app\services\video.py:201": combine_videos - 视频帧率: 60.0fps
+2025-03-31 11:18:22 | INFO | "./app\services\video.py:313": combine_videos - 片段处理命令: ffmpeg -y -ss 0 -i C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_001_processed.mp4 -t 4.155 -vf scale=1080:1920:force_original_aspect_ratio=1,crop=1080:1920:0:0,format=yuv420p -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -pix_fmt yuv420p G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\temp_combine_9096a943-e669-431a-a1aa-eae0e39bd899\segment_001.mp4
+2025-03-31 11:18:23 | INFO | "./app\services\video.py:345": combine_videos - 创建视频片段: G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\temp_combine_9096a943-e669-431a-a1aa-eae0e39bd899\segment_001.mp4, 时长: 4.16秒
+2025-03-31 11:18:23 | INFO | "./app\services\video.py:167": combine_videos - 处理视频 3/3: video_task-1743386507404_002_processed.mp4
+2025-03-31 11:18:23 | INFO | "./app\services\video_metadata.py:245": get_video_metadata - 🎬 获取视频完整元数据 | 路径: C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_002_processed.mp4
+2025-03-31 11:18:23 | DEBUG | "./app\services\cache_manager.py:67": generate_key - 生成缓存键: video:metadata:53dbeba77271bfef052df7c68c0e2b14 (基于 video_task-1743386507404_002_processed.mp4)
+2025-03-31 11:18:23 | INFO | "./app\services\cache_manager.py:103": get_metadata - ❗ 缓存未命中: video_task-1743386507404_002_processed.mp4
+2025-03-31 11:18:23 | INFO | "./app\services\video_metadata.py:267": get_video_metadata - ✅ 使用MediaInfo获取视频元数据
+2025-03-31 11:18:23 | DEBUG | "./app\services\mediainfo.py:48": _execute_mediainfo - 🔍 执行命令: mediainfo --Output=JSON C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_002_processed.mp4
+2025-03-31 11:18:23 | INFO | "./app\services\mediainfo.py:170": get_basic_metadata - 🎬 MediaInfo基本元数据获取成功: 宽=1080, 高=1920, 旋转=0°, 编码=avc
+2025-03-31 11:18:23 | DEBUG | "./app\services\mediainfo.py:48": _execute_mediainfo - 🔍 执行命令: mediainfo --Output=JSON C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_002_processed.mp4
+2025-03-31 11:18:23 | INFO | "./app\services\mediainfo.py:261": get_detailed_metadata - 🎬 MediaInfo详细元数据获取成功: 帧率=59.94fps, 时长=42.56秒
+2025-03-31 11:18:23 | DEBUG | "./app\services\cache_manager.py:67": generate_key - 生成缓存键: video:metadata:53dbeba77271bfef052df7c68c0e2b14 (基于 video_task-1743386507404_002_processed.mp4)
+2025-03-31 11:18:23 | INFO | "./app\services\cache_manager.py:133": set_metadata - ✅ 元数据已写入内存缓存: video_task-1743386507404_002_processed.mp4
+2025-03-31 11:18:23 | INFO | "./app\services\video.py:182": combine_videos - 视频信息: 宽=1080, 高=1920, 编码=avc, 旋转=0°
+2025-03-31 11:18:23 | INFO | "./app\services\video.py:201": combine_videos - 视频帧率: 59.94005994005994fps
+2025-03-31 11:18:23 | INFO | "./app\services\video.py:313": combine_videos - 片段处理命令: ffmpeg -y -ss 0 -i C:\Users\ADMINI~1\AppData\Local\Temp\mix_videos_task-1743386507404_83z72h0z\video_task-1743386507404_002_processed.mp4 -t 10 -vf scale=1080:1920:force_original_aspect_ratio=1,crop=1080:1920:0:0,format=yuv420p -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -pix_fmt yuv420p G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\temp_combine_9096a943-e669-431a-a1aa-eae0e39bd899\segment_002.mp4
+2025-03-31 11:18:26 | INFO | "./app\services\video.py:345": combine_videos - 创建视频片段: G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\temp_combine_9096a943-e669-431a-a1aa-eae0e39bd899\segment_002.mp4, 时长: 10.00秒
+2025-03-31 11:18:27 | INFO | "./app\services\video.py:405": combine_videos - 视频合成成功: G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\combined-1.mp4
+2025-03-31 11:18:27 | INFO | "./app\services\task.py:193": generate_final_videos - 
+
+## generating video: 1 => G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\final-1.mp4
+2025-03-31 11:18:27 | INFO | "./app\services\video.py:442": generate_video - 使用ffmpeg生成视频
+2025-03-31 11:18:27 | INFO | "./app\services\video.py:456": generate_video - 最大视频尺寸: 1080 x 1920
+2025-03-31 11:18:27 | INFO | "./app\services\video.py:457": generate_video - 视频: G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\combined-1.mp4   
+2025-03-31 11:18:27 | INFO | "./app\services\video.py:458": generate_video - 音频: G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\audio.mp3        
+2025-03-31 11:18:27 | INFO | "./app\services\video.py:459": generate_video - 字幕: G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\subtitle.srt     
+2025-03-31 11:18:27 | INFO | "./app\services\video.py:460": generate_video - 输出: G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\final-1.mp4      
+2025-03-31 11:18:27 | INFO | "./app\services\video.py:469": generate_video - 使用NVIDIA硬件加速编码
+2025-03-31 11:18:27 | INFO | "./app\services\video_metadata.py:245": get_video_metadata - 🎬 获取视频完整元数据 | 路径: G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\combined-1.mp4
+2025-03-31 11:18:27 | DEBUG | "./app\services\cache_manager.py:67": generate_key - 生成缓存键: video:metadata:534f031933ddef5e41dbfd9c27b36a5d (基于 combined-1.mp4)        
+2025-03-31 11:18:27 | INFO | "./app\services\cache_manager.py:103": get_metadata - ❗ 缓存未命中: combined-1.mp4
+2025-03-31 11:18:27 | INFO | "./app\services\video_metadata.py:267": get_video_metadata - ✅ 使用MediaInfo获取视频元数据
+2025-03-31 11:18:27 | DEBUG | "./app\services\mediainfo.py:48": _execute_mediainfo - 🔍 执行命令: mediainfo --Output=JSON G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\combined-1.mp4
+2025-03-31 11:18:27 | INFO | "./app\services\mediainfo.py:170": get_basic_metadata - 🎬 MediaInfo基本元数据获取成功: 宽=1080, 高=1920, 旋转=0°, 编码=avc
+2025-03-31 11:18:27 | DEBUG | "./app\services\mediainfo.py:48": _execute_mediainfo - 🔍 执行命令: mediainfo --Output=JSON G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\combined-1.mp4
+2025-03-31 11:18:27 | INFO | "./app\services\mediainfo.py:261": get_detailed_metadata - 🎬 MediaInfo详细元数据获取成功: 帧率=15.38fps, 时长=73.45秒
+2025-03-31 11:18:27 | DEBUG | "./app\services\cache_manager.py:67": generate_key - 生成缓存键: video:metadata:534f031933ddef5e41dbfd9c27b36a5d (基于 combined-1.mp4)        
+2025-03-31 11:18:27 | INFO | "./app\services\cache_manager.py:133": set_metadata - ✅ 元数据已写入内存缓存: combined-1.mp4
+2025-03-31 11:18:27 | INFO | "./app\services\video.py:486": generate_video - 视频特性: 宽=1080, 高=1920, 编码=avc, 旋转=0°
+2025-03-31 11:18:27 | INFO | "./app\services\video.py:488": generate_video - 视频分类: 4K=False, 高清=True, 需要旋转=False
+2025-03-31 11:18:27 | INFO | "./app\services\video.py:504": generate_video - 优化后的编码参数: {'bitrate': 15000, 'maxrate': 22500, 'bufsize': 45000, 'refs': 5, 'g': 30, 'preset': 'p7', 'tune': 'hq', 'multipass': 'fullres', 'spatial-aq': '1', 'temporal-aq': '1', 'aq-strength': '15', 'rc-lookahead': '40', 'surfaces': '64', 'gpu': '0', 'b_ref_mode': 'middle'}
+2025-03-31 11:18:27 | INFO | "./app\services\video_processing.py:131": build_filter_string - 最终滤镜串: format=yuv420p
+2025-03-31 11:18:27 | INFO | "./app\services\video.py:564": generate_video - 处理视频中... 应用滤镜: format=yuv420p,format=yuv420p
+2025-03-31 11:18:28 | INFO | "./app\services\video.py:581": generate_video - 视频处理进度: frame=    6 fps=0.0 q=10.0 size=     256KiB time=00:00:00.06 bitrate=31462.9kbits/s speed=0.13x
+2025-03-31 11:18:28 | INFO | "./app\services\video.py:581": generate_video - 视频处理进度: frame=   94 fps= 91 q=20.0 size=    3328KiB time=00:00:01.53 bitrate=17780.5kbits/s speed=1.48x
+2025-03-31 11:18:29 | INFO | "./app\services\video.py:581": generate_video - 视频处理进度: frame=  176 fps=114 q=19.0 size=    6400KiB time=00:00:02.90 bitrate=18079.0kbits/s speed=1.88x
+2025-03-31 11:18:29 | INFO | "./app\services\video.py:581": generate_video - 视频处理进度: frame=  264 fps=128 q=26.0 size=    9472KiB time=00:00:04.36 bitrate=17769.8kbits/s speed=2.12x
+2025-03-31 11:18:30 | INFO | "./app\services\video.py:581": generate_video - 视频处理进度: frame=  355 fps=138 q=23.0 size=   11776KiB time=00:00:05.88 bitrate=16397.1kbits/s speed=2.29x
+2025-03-31 11:18:30 | INFO | "./app\services\video.py:581": generate_video - 视频处理进度: frame=  445 fps=144 q=20.0 size=   13824KiB time=00:00:07.38 bitrate=15338.1kbits/s speed=2.39x
+2025-03-31 11:18:31 | INFO | "./app\services\video.py:581": generate_video - 视频处理进度: frame=  534 fps=148 q=21.0 size=   16384KiB time=00:00:08.86 bitrate=15137.4kbits/s speed=2.46x
+2025-03-31 11:18:32 | INFO | "./app\services\video.py:581": generate_video - 视频处理进度: frame=  624 fps=151 q=23.0 size=   18944KiB time=00:00:10.36 bitrate=14970.1kbits/s speed=2.52x
+2025-03-31 11:18:32 | INFO | "./app\services\video.py:581": generate_video - 视频处理进度: frame=  720 fps=155 q=15.0 size=   21248KiB time=00:00:11.96 bitrate=14545.7kbits/s speed=2.58x
+2025-03-31 11:18:33 | INFO | "./app\services\video.py:581": generate_video - 视频处理进度: frame=  814 fps=158 q=21.0 size=   23808KiB time=00:00:13.53 bitrate=14411.5kbits/s speed=2.63x
+2025-03-31 11:18:33 | INFO | "./app\services\video.py:581": generate_video - 视频处理进度: frame=  909 fps=161 q=12.0 size=   26624KiB time=00:00:58.98 bitrate=3697.7kbits/s speed=10.4x
+2025-03-31 11:18:34 | INFO | "./app\services\video.py:581": generate_video - 视频处理进度: frame= 1000 fps=162 q=9.0 size=   28928KiB time=00:01:04.91 bitrate=3650.5kbits/s speed=10.5x
+2025-03-31 11:18:34 | INFO | "./app\services\video.py:581": generate_video - 视频处理进度: frame= 1066 fps=159 q=17.0 size=   31232KiB time=00:01:09.21 bitrate=3696.4kbits/s speed=10.3x
+2025-03-31 11:18:34 | INFO | "./app\services\video.py:581": generate_video - 视频处理进度: frame= 1128 fps=167 q=19.0 Lsize=   33466KiB time=00:01:13.25 bitrate=3742.7kbits/s speed=10.9x
+2025-03-31 11:18:34 | INFO | "./app\services\video.py:626": generate_video - 处理背景音乐...
+2025-03-31 11:18:34 | INFO | "./app\services\video.py:660": generate_video - 转换字幕格式...
+2025-03-31 11:18:34 | DEBUG | "./app\services\video.py:667": generate_video - 原始字幕路径: G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\subtitle.ass
+2025-03-31 11:18:34 | DEBUG | "./app\services\video.py:668": generate_video - 处理后路径 (1): G:/MoneyPrinterTurbo/storage/tasks/2fac082d-1122-4127-8717-e829cb05fe93/subtitle.ass
+2025-03-31 11:18:34 | DEBUG | "./app\services\video.py:676": generate_video - Windows路径处理 (2): G\:/MoneyPrinterTurbo/storage/tasks/2fac082d-1122-4127-8717-e829cb05fe93/subtitle.ass
+2025-03-31 11:18:34 | DEBUG | "./app\services\video.py:681": generate_video - 添加引号 (3): 'G\:/MoneyPrinterTurbo/storage/tasks/2fac082d-1122-4127-8717-e829cb05fe93/subtitle.ass'
+2025-03-31 11:18:34 | INFO | "./app\services\video.py:695": generate_video - 字幕滤镜设置: subtitles='G\:/MoneyPrinterTurbo/storage/tasks/2fac082d-1122-4127-8717-e829cb05fe93/subtitle.ass':force_style='FontName=MicrosoftYaHeiNormal.ttc,FontSize=8,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=1.5,Alignment=2,MarginV=50'2025-03-31 11:18:34 | INFO | "./app\services\video.py:730": generate_video - 视频尺寸: 1080x1920
+2025-03-31 11:18:34 | INFO | "./app\services\video.py:762": generate_video - 处理音频...
+2025-03-31 11:18:35 | INFO | "./app\services\video.py:777": generate_video - 生成最终视频...
+2025-03-31 11:18:35 | INFO | "./app\services\video.py:828": generate_video - 生成最终视频... 命令: ffmpeg -y -i G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\processed_d65149ab-a811-4133-8205-e430ccadc283.mp4 -i G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\merged_audio.m4a -vf subtitles='G\:/MoneyPrinterTurbo/storage/tasks/2fac082d-1122-4127-8717-e829cb05fe93/subtitle.ass':force_style='FontName=MicrosoftYaHeiNormal.ttc,FontSize=8,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=1.5,Alignment=2,MarginV=50' -map 0:v -map 1:a -c:v h264_nvenc -preset p1 -c:a aac -b:a 192k -shortest -movflags +faststart -pix_fmt yuv420p G:\MoneyPrinterTurbo\storage\tasks\2fac082d-1122-4127-8717-e829cb05fe93\final-1.mp4
+2025-03-31 11:18:36 | INFO | "./app\services\video.py:846": generate_video - 最终合成进度: frame=  446 fps=0.0 q=21.0 size=    3072KiB time=00:00:07.41 bitrate=3393.2kbits/s speed=14.5x
+2025-03-31 11:18:36 | INFO | "./app\services\video.py:846": generate_video - 最终合成进度: frame=  847 fps=815 q=43.0 size=    5120KiB time=00:00:14.11 bitrate=2971.2kbits/s speed=13.6x
+2025-03-31 11:18:36 | INFO | "./app\services\video.py:846": generate_video - 最终合成进度: frame=  870 fps=584 q=27.0 Lsize=    5696KiB time=00:00:49.36 bitrate= 945.2kbits/s speed=33.2x
+2025-03-31 11:18:36 | SUCCESS | "./app\services\video.py:856": generate_video - 视频生成成功: final-1.mp4
+2025-03-31 11:18:36 | SUCCESS | "./app\services\task.py:313": start - task 2fac082d-1122-4127-8717-e829cb05fe93 finished, generated 1 videos.
+2025-03-31 11:18:51 | SUCCESS | "./app\controllers\v1\video.py:158": delete_video - video deleted: {
+    "state": 1,
+    "progress": 100,
+    "videos": [
+        "http://127.0.0.1:3004/tasks/2fac082d-1122-4127-8717-e829cb05fe93/final-1.mp4"
+    ],
+    "combined_videos": [
+        "http://127.0.0.1:3004/tasks/2fac082d-1122-4127-8717-e829cb05fe93/combined-1.mp4"
+    ],
+    "script": "90%老板都不知道，选对粉碎机，每年可省下几万甚至几十万！您是否还在为传统粉碎机粉碎不均、卡料、过热、效率低而头痛？片段1：看我们工厂研发的辣椒粉碎机，快速粉碎 ，颗粒均匀，省时省力！精细研磨200目，变频调速，智能控温，片段2：进料顺畅，操作简便，食品级不锈钢，一机多用，片段3：湖南食品厂客户见证：用了我们的辣椒粉碎机，生产效率提升3倍，每年节省1万电费！厂家直销，限时送运费，0风险试用，满意再付款！评论区回复【粉碎机】，领取免费试机名额！",
+    "terms": "",
+    "audio_file": "G:\\MoneyPrinterTurbo\\storage\\tasks\\2fac082d-1122-4127-8717-e829cb05fe93\\audio.mp3",
+    "audio_duration": 49,
+    "subtitle_path": "G:\\MoneyPrinterTurbo\\storage\\tasks\\2fac082d-1122-4127-8717-e829cb05fe93\\subtitle.srt",
+    "materials": [
+        "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\mix_videos_task-1743386507404_83z72h0z\\video_task-1743386507404_000_processed.mp4",
+        "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\mix_videos_task-1743386507404_83z72h0z\\video_task-1743386507404_001_processed.mp4",
+        "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\mix_videos_task-1743386507404_83z72h0z\\video_task-1743386507404_002_processed.mp4"
+    ]
+}
+
