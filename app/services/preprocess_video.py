@@ -527,7 +527,9 @@ class VideoPreprocessor:
             # CPU编码使用标准参数
             encoder_params = {
                 "preset": "medium",
-                "crf": "23"
+                "crf": "23",
+                "profile": "high",
+                "level": "4.1"
             }
         
         # 构建FFMPEG命令
@@ -551,7 +553,9 @@ class VideoPreprocessor:
             # 使用CPU编码参数
             cpu_params = {
                 "preset": "medium", 
-                "crf": "23"
+                "crf": "23",
+                "profile": "high",
+                "level": "4.1"
             }
             
             # 构建CPU编码命令
@@ -573,8 +577,13 @@ class VideoPreprocessor:
             copy_cmd = [
                 "ffmpeg", "-y",
                 "-i", source_path,
-                "-c:v", "copy",
-                "-c:a", "copy",
+                "-c:v", "libx264",
+                "-preset", "medium",
+                "-crf", "23",
+                "-profile:v", "high",
+                "-level", "4.1",
+                "-c:a", "aac",
+                "-b:a", "128k",
                 processed_path
             ]
             success = self._run_ffmpeg_command(copy_cmd)
@@ -709,6 +718,14 @@ class VideoPreprocessor:
         # 清除旋转元数据，确保视频在所有播放器中正确显示
         cmd.extend(["-metadata:s:v", "rotate=0"])
         cmd.extend(["-metadata:s:v:0", "rotate=0"])
+        
+        # 强制使用H.264编码
+        if "nvenc" in encoder:
+            # 对于NVENC，添加profile和level参数确保H.264兼容性
+            cmd.extend(["-profile:v", "high", "-level", "4.1"])
+        else:
+            # 对于CPU编码，使用libx264的profile设置
+            cmd.extend(["-profile:v", "high", "-level", "4.1"])
         
         # 添加输出文件
         cmd.append(output_path)

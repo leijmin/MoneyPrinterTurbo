@@ -126,7 +126,6 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
 def get_video_materials(task_id, params, video_terms, audio_duration):
     if params.video_source == "local":
         logger.info("\n\n## preprocess local materials")
-        logger.info(f"params: {params}")
         materials = video.preprocess_video(
             materials=params.video_materials, clip_duration=params.video_clip_duration, video_aspect=params.video_aspect
         )

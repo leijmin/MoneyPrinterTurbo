@@ -102,7 +102,7 @@ def combine_videos(
     if not video_paths:
         logger.error("没有输入视频文件")
         return None
-    
+    return None
     if not os.path.exists(audio_file):
         logger.error(f"音频文件不存在: {audio_file}")
         return None
@@ -288,25 +288,108 @@ def combine_videos(
         if video_concat_mode == VideoConcatMode.random:
             random.shuffle(segment_files)
         
-        # 创建片段列表文件
+        # 使用concat分离器合并视频片段
+        concat_output_path = os.path.join(temp_dir, "concat_output.mp4")
+        
+        # 首先统一所有片段的格式和帧率
+        normalized_segments = []
+        for i, segment in enumerate(segment_files):
+            normalized_segment = os.path.join(temp_dir, f"normalized_{i:03d}.mp4")
+            normalize_cmd = [
+                "ffmpeg", "-y",
+                "-i", segment,
+                "-c:v", "libx264",
+                "-preset", "fast",
+                "-crf", "23",
+                "-pix_fmt", "yuv420p",
+                "-r", "60",  # 强制60fps
+                "-vsync", "cfr",  # 使用固定帧率
+                normalized_segment
+            ]
+            try:
+                subprocess.run(normalize_cmd, check=True, capture_output=True)
+                normalized_segments.append(normalized_segment)
+            except subprocess.CalledProcessError as e:
+                logger.error(f"标准化视频片段失败: {e.stderr.decode('utf-8', errors='replace') if e.stderr else ''}")
+                normalized_segments.append(segment)  # 如果失败，使用原始片段
+        
+        # 创建新的片段列表文件
         segments_list_path = os.path.join(temp_dir, "segments.txt")
         with open(segments_list_path, "w") as f:
-            for segment in segment_files:
+            for segment in normalized_segments:
                 f.write(f"file '{segment}'\n")
         
         # 使用concat分离器合并视频片段
-        concat_output_path = os.path.join(temp_dir, "concat_output.mp4")
         concat_cmd = [
             "ffmpeg", "-y",
             "-f", "concat",
             "-safe", "0",
             "-i", segments_list_path,
-            "-c", "copy",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            "-r", "60",
+            "-vsync", "cfr",
+            "-max_muxing_queue_size", "1024",
             concat_output_path
         ]
         
         try:
+            logger.info("合并视频片段...")
             subprocess.run(concat_cmd, check=True, capture_output=True)
+            
+            # 验证合并后的视频时长
+            probe_cmd = [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "json",
+                concat_output_path
+            ]
+            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+            if probe_result.returncode == 0:
+                duration_info = json.loads(probe_result.stdout)
+                total_duration = float(duration_info["format"]["duration"])
+                logger.info(f"合并后视频总时长: {total_duration:.2f}秒")
+                
+                # 如果时长明显不对，尝试使用filter_complex方式重新合并
+                if total_duration > sum(segment_duration for segment_duration in [10.0, 4.16, 10.0]):
+                    logger.warning("检测到时长异常，使用filter_complex方式重新合并")
+                    filter_complex = []
+                    for i, segment in enumerate(normalized_segments):
+                        filter_complex.append(f"[{i}:v]setpts=PTS-STARTPTS[v{i}]")
+                    
+                    # 添加连接
+                    for i in range(len(normalized_segments) - 1):
+                        filter_complex.append(f"[v{i}][v{i+1}]concat=n=2:v=1:a=0[outv{i+1}]")
+                    
+                    # 构建新的合并命令
+                    new_concat_cmd = ["ffmpeg", "-y"]
+                    for segment in normalized_segments:
+                        new_concat_cmd.extend(["-i", segment])
+                    
+                    new_concat_cmd.extend([
+                        "-filter_complex", ";".join(filter_complex),
+                        "-map", f"[outv{len(normalized_segments)-1}]",
+                        "-c:v", "libx264",
+                        "-preset", "fast",
+                        "-crf", "23",
+                        "-pix_fmt", "yuv420p",
+                        "-r", "60",
+                        "-vsync", "cfr",
+                        "-max_muxing_queue_size", "1024",
+                        concat_output_path
+                    ])
+                    
+                    subprocess.run(new_concat_cmd, check=True, capture_output=True)
+                    
+                    # 再次验证时长
+                    probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+                    if probe_result.returncode == 0:
+                        duration_info = json.loads(probe_result.stdout)
+                        new_duration = float(duration_info["format"]["duration"])
+                        logger.info(f"重新合并后视频总时长: {new_duration:.2f}秒")
         except subprocess.CalledProcessError as e:
             logger.error(f"合并视频片段失败: {e.stderr.decode('utf-8', errors='replace') if e.stderr else ''}")
             return None
@@ -321,7 +404,9 @@ def combine_videos(
             "-c:v", "copy",
             "-c:a", "aac",
             "-b:a", "192k",
-            "-shortest",
+            "-shortest",  # 确保输出长度最短
+            "-vsync", "cfr",  # 使用固定帧率
+            "-r", "60",  # 设置固定帧率为60fps
             combined_video_path
         ]
         
@@ -341,11 +426,12 @@ def combine_videos(
         logger.error(f"视频合成过程中发生错误: {str(e)}")
         return None
     finally:
+        pass
         # 清理临时文件
-        try:
-            shutil.rmtree(temp_dir)
-        except Exception as e:
-            logger.warning(f"清理临时目录失败: {str(e)}")
+        # try:
+        #     shutil.rmtree(temp_dir)
+        # except Exception as e:
+        #     logger.warning(f"清理临时目录失败: {str(e)}")
 
 
 def generate_video(
