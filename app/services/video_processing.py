@@ -76,13 +76,18 @@ class VideoProcessor:
         
         # 检查文件名是否表明视频已经处理过旋转
         rotation_handled = features.get("rotation_handled", False)
+        is_preprocessed = features.get("is_preprocessed", False)
         filename = features.get("filename", "")
-        if filename and ("_processed" in filename or "proc_" in filename):
+        
+        # 更严格地检查是否已经处理过旋转
+        if (is_preprocessed or 
+            rotation_handled or 
+            (filename and ("_processed" in filename or "proc_" in filename))):
             rotation_handled = True
-            logger.info(f"检测到已处理文件名格式，跳过旋转处理: {filename}")
+            logger.info(f"跳过旋转处理，视频已预处理: {filename}")
         
         # 1. 处理旋转 - 如果还未处理过旋转，且需要旋转
-        if features["needs_rotation"] and not rotation_handled:
+        if features.get("needs_rotation", False) and not rotation_handled:
             rotation = features["rotation"]
             if rotation == 90:
                 filters.append("transpose=2")  # 90度旋转 (需顺时针270度校正) -> transpose=2
@@ -97,6 +102,14 @@ class VideoProcessor:
             # 添加抗锯齿处理
             filters.append("smartblur=3:0.8:0")
             logger.info("应用smartblur滤镜防止旋转引起的锯齿")
+        
+        # 如果已预处理，跳过缩放和填充
+        if is_preprocessed:
+            logger.info("跳过缩放和填充，视频已预处理")
+            # 确保yuv420p像素格式
+            if filters:
+                filters.append("format=yuv420p")
+            return ",".join(filters) if filters else "null"
         
         # 2. 缩放和填充处理
         width = features["width"]

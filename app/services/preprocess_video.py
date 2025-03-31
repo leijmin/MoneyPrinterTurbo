@@ -265,21 +265,50 @@ class VideoPreprocessor:
     def _process_video_file(self, material, encoder, clip_duration, video_aspect: VideoAspect = VideoAspect.portrait):
         """处理单个视频文件"""
         try:
+            # 检查视频是否已经被处理过
+            url = material.url
+            file_name = os.path.basename(url)
+            
+            # 检查文件名是否已经包含处理标记
+            if "_processed" in file_name or "proc_" in file_name:
+                logger.info(f"文件已处理过，跳过处理: {file_name}")
+                return True
+            
             # 1. 提取视频信息
-            video_info = self._extract_video_info(material.url)
+            video_info = self._extract_video_info(url)
             if not video_info:
-                logger.error(f"无法获取视频信息: {os.path.basename(material.url)}")
+                logger.error(f"无法获取视频信息: {os.path.basename(url)}")
                 return False
             
             # 2. 判断是否需要处理
-            process_config = self._determine_processing_needs(video_info, material.url, video_aspect)
+            process_config = self._determine_processing_needs(video_info, url, video_aspect)
             
             # 如果不需要处理，直接返回成功
             if not process_config.get("needs_processing", False):
-                logger.info(f"视频无需处理: {os.path.basename(material.url)}")
+                logger.info(f"视频无需处理: {os.path.basename(url)}")
                 return True
+                
             # 3. 执行视频处理
-            return self._execute_video_processing(material, video_info, process_config, encoder, clip_duration)
+            result = self._execute_video_processing(material, video_info, process_config, encoder, clip_duration)
+            
+            # 4. 如果处理成功，确保更新material的url为新路径
+            if result and hasattr(material, 'processed_path') and material.processed_path:
+                material.url = material.processed_path
+                
+                # 将处理信息添加到元数据缓存
+                if hasattr(video_info, 'to_dict'):
+                    metadata = video_info.to_dict()
+                    metadata["rotation_handled"] = True
+                    metadata["is_preprocessed"] = True
+                    metadata["preprocessed_path"] = material.processed_path
+                    
+                    # 更新缓存
+                    from app.services.cache_manager import cache_manager
+                    cache_manager.set_metadata(material.processed_path, "detailed", metadata)
+                    
+                    logger.info(f"已将处理信息添加到元数据缓存: {os.path.basename(material.processed_path)}")
+            
+            return result
         except Exception as e:
             logger.error(f"处理视频文件时出错: {str(e)}")
             return False
