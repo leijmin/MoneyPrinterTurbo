@@ -420,10 +420,13 @@ def generate_video(
                 processed_bgm
             ]
             
-            subprocess.run(bgm_cmd, check=True, capture_output=True)
-            
-            if not os.path.exists(processed_bgm) or os.path.getsize(processed_bgm) == 0:
-                logger.error("背景音乐处理失败")
+            try:
+                subprocess.run(bgm_cmd, check=True, capture_output=True)
+                if not os.path.exists(processed_bgm) or os.path.getsize(processed_bgm) == 0:
+                    logger.error("背景音乐处理失败")
+                    processed_bgm = None
+            except subprocess.CalledProcessError as e:
+                logger.error(f"背景音乐处理失败: {e.stderr.decode('utf-8', errors='replace') if e.stderr else ''}")
                 processed_bgm = None
         
         # 合并音频（主音频和背景音乐）
@@ -453,54 +456,115 @@ def generate_video(
             ]
         
         logger.info("处理音频...")
-        subprocess.run(audio_cmd, check=True, capture_output=True)
-        
-        if not os.path.exists(merged_audio) or os.path.getsize(merged_audio) == 0:
-            logger.error("音频处理失败")
+        try:
+            subprocess.run(audio_cmd, check=True, capture_output=True)
+            if not os.path.exists(merged_audio) or os.path.getsize(merged_audio) == 0:
+                logger.error("音频处理失败")
+                return None
+        except subprocess.CalledProcessError as e:
+            logger.error(f"音频处理失败: {e.stderr.decode('utf-8', errors='replace') if e.stderr else ''}")
             return None
             
-        # 处理字幕
-        subtitle_filter = ""
+        # 处理字幕 - 使用两步法处理字幕，避免路径问题
+        has_subtitle = False
+        subtitle_file = None
         if subtitle_path and os.path.exists(subtitle_path) and params.subtitle_enabled:
-            # 准备字体
-            font_path = ""
-            if not params.font_name:
-                params.font_name = "STHeitiMedium.ttc"
-            font_path = os.path.join(utils.font_dir(), params.font_name)
-            if os.name == "nt":
-                font_path = font_path.replace("\\", "/")
+            try:
+                # 准备字体
+                font_path = ""
+                if not params.font_name:
+                    params.font_name = "STHeitiMedium.ttc"
+                font_path = os.path.join(utils.font_dir(), params.font_name)
                 
-            # 确定字幕位置
-            alignment = 2  # 默认底部居中
-            if params.subtitle_position == "top":
-                alignment = 8  # 顶部居中
-            elif params.subtitle_position == "center":
-                alignment = 5  # 中间居中
+                logger.info("使用两步法处理字幕...")
                 
-            # 创建ASS字幕
-            ass_subtitle = os.path.join(temp_dir, "subtitle.ass")
-            subtitle_cmd = [
-                "ffmpeg", "-y",
-                "-i", subtitle_path,
-                "-f", "ass",
-                ass_subtitle
-            ]
-            
-            logger.info("转换字幕格式...")
-            subprocess.run(subtitle_cmd, check=True, capture_output=True)
-            
-            if os.path.exists(ass_subtitle):
-                # 安全处理路径中的特殊字符
-                safe_subtitle_path = ass_subtitle.replace(":", "\\:")
-                subtitle_filter = f"subtitles={safe_subtitle_path}:force_style='FontName={params.font_name},FontSize={params.font_size},PrimaryColour=&H{params.text_fore_color[1:]}&,OutlineColour=&H{params.stroke_color[1:]}&,BorderStyle=1,Outline={params.stroke_width},Alignment={alignment}'"
-
+                # 第一步：先将视频和音频合并
+                temp_video_path = os.path.join(temp_dir, "temp_video_no_subtitle.mp4")
+                
+                # 合并视频和音频
+                temp_cmd = [
+                    "ffmpeg", "-y",
+                    "-i", video_path,
+                    "-i", merged_audio,
+                    "-map", "0:v",
+                    "-map", "1:a",
+                    "-c:v", "copy",
+                    "-c:a", "copy",
+                    "-shortest",
+                    temp_video_path
+                ]
+                
+                logger.info("第一步：合并视频和音频...")
+                try:
+                    subprocess.run(temp_cmd, check=True, capture_output=True)
+                    if os.path.exists(temp_video_path) and os.path.getsize(temp_video_path) > 0:
+                        logger.info("视频和音频合并成功")
+                        
+                        # 第二步：添加字幕
+                        logger.info("第二步：添加字幕...")
+                        
+                        # 使用特定参数处理字幕
+                        if params.subtitle_position == "top":
+                            position = "top"  # 顶部
+                        elif params.subtitle_position == "center":
+                            position = "center"  # 中间
+                        else:
+                            position = "bottom"  # 底部
+                            
+                        # 构建添加字幕的命令
+                        sub_cmd = [
+                            "ffmpeg", "-y",
+                            "-i", temp_video_path,
+                            "-i", subtitle_path,
+                            "-map", "0:v",
+                            "-map", "0:a",
+                            "-c:v", "libx264",
+                            "-preset", "medium",
+                            "-crf", "23",
+                            "-c:a", "copy",
+                            "-pix_fmt", "yuv420p"
+                        ]
+                        
+                        # 尝试将字幕直接添加为流 (不使用-map 1:s，因为可能某些字幕没有流)
+                        # 而是使用-vf subtitles选项
+                        if os.path.exists(subtitle_path):
+                            # 处理路径以便在Windows上正常工作
+                            safe_subtitle_path = subtitle_path.replace('\\', '/')
+                            if ':' in safe_subtitle_path:
+                                safe_subtitle_path = safe_subtitle_path.replace(':', '\\\\:')
+                            sub_cmd.extend(["-vf", f"subtitles='{safe_subtitle_path}'"])
+                        
+                        # 完成命令
+                        sub_cmd.append(output_file)
+                        
+                        logger.info(f"字幕处理命令: {' '.join(sub_cmd)}")
+                        subprocess.run(sub_cmd, check=True, capture_output=True)
+                        
+                        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                            logger.success("添加字幕成功")
+                            return output_file
+                        else:
+                            logger.error("添加字幕失败，尝试不带字幕生成")
+                    else:
+                        logger.error("视频和音频合并失败")
+                except subprocess.CalledProcessError as e:
+                    error_msg = e.stderr.decode('utf-8', errors='replace') if e.stderr else ''
+                    logger.error(f"字幕处理失败: {error_msg}")
+            except Exception as e:
+                logger.error(f"处理字幕时出错: {str(e)}")
+        
+        # 如果字幕处理部分没有成功，继续执行常规视频生成
+        logger.info("使用常规方式生成视频（无字幕）...")
+        
         # 构建最终滤镜字符串
         filter_complex = []
         
-        if subtitle_filter:
-            filter_complex.append(subtitle_filter)
-
-        # 最终合并视频、音频和字幕
+        # 添加可能需要的其他滤镜
+        if is_preprocessed:
+            # 如果已预处理，只添加必要的滤镜
+            filter_complex.append("format=yuv420p")
+        
+        # 最终合并视频、音频
         final_cmd = [
             "ffmpeg", "-y",
             "-i", video_path,
@@ -520,10 +584,14 @@ def generate_video(
             "-crf", "23",
             "-c:a", "copy",
             "-shortest",
+            "-pix_fmt", "yuv420p",
+            "-max_muxing_queue_size", "1024",  # 增加队列大小
             output_file
         ])
         
         logger.info("生成最终视频...")
+        logger.info(f"FFmpeg命令: {' '.join(final_cmd)}")
+        
         final_process = subprocess.Popen(
             final_cmd, 
             stdout=subprocess.PIPE, 
@@ -535,11 +603,19 @@ def generate_video(
         for line in final_process.stderr:
             if "time=" in line and "bitrate=" in line:
                 logger.info(f"视频合成进度: {line.strip()}")
+            elif "error" in line.lower():
+                logger.error(f"FFmpeg错误: {line.strip()}")
         
         final_process.wait()
         
-        if final_process.returncode != 0 or not os.path.exists(output_file) or os.path.getsize(output_file) == 0:
-            logger.error("最终视频生成失败")
+        if final_process.returncode != 0:
+            error_output = final_process.stderr.read()
+            logger.error(f"视频生成失败，FFmpeg返回码: {final_process.returncode}")
+            logger.error(f"错误输出: {error_output}")
+            return None
+            
+        if not os.path.exists(output_file) or os.path.getsize(output_file) == 0:
+            logger.error("最终视频文件不存在或为空")
             return None
             
         logger.success(f"视频生成成功: {os.path.basename(output_file)}")
