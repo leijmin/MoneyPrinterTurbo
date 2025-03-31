@@ -45,9 +45,6 @@ from app.utils import utils
 
 from app.services.video_metadata import VideoMetadataExtractor
 from app.services.preprocess_video import VideoPreprocessor
-from app.services.video_encoder import EncoderConfig
-from app.services.video_processing import VideoProcessor
-from app.services.ffmpeg_processor import FFmpegProcessor
 
 # 预处理视频 给外部调用
 def preprocess_video(materials: List[MaterialInfo], clip_duration=4, video_aspect: VideoAspect = VideoAspect.portrait):
