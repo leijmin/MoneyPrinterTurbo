@@ -10,7 +10,7 @@ from app.models.schema import MaterialInfo, VideoAspect
 from app.utils import utils
 from app.services.video_metadata import VideoMetadataExtractor
 from app.services.video_encoder import HardwareAccelerator , EncoderConfig
-
+from app.models.schema import VideoAspect
 
 
 class VideoPreprocessor:
@@ -150,7 +150,7 @@ class VideoPreprocessor:
             return None
 
     @staticmethod
-    def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
+    def preprocess_video(materials: List[MaterialInfo], clip_duration=4, video_aspect: VideoAspect = VideoAspect.portrait):
         """
         处理视频和图片素材
         
@@ -180,7 +180,7 @@ class VideoPreprocessor:
         processor = VideoPreprocessor()
         
         # 处理视频素材
-        return processor._process_materials(materials, clip_duration)
+        return processor._process_materials(materials, clip_duration, video_aspect)
     
     @staticmethod
     def preprocess_video_ffmpeg(materials: List[MaterialInfo], clip_duration=4):
@@ -197,7 +197,7 @@ class VideoPreprocessor:
         # 直接调用preprocess_video，保持API一致性
         return VideoPreprocessor.preprocess_video(materials, clip_duration)
     
-    def _process_materials(self, materials: List[MaterialInfo], clip_duration=4):
+    def _process_materials(self, materials: List[MaterialInfo], clip_duration=4, video_aspect: VideoAspect = VideoAspect.portrait):
         """
         处理素材列表（实例方法）
         
@@ -235,7 +235,7 @@ class VideoPreprocessor:
                 
                 if ext in const.FILE_TYPE_VIDEOS:
                     # 处理视频
-                    success = self._process_video_file(material, encoder, clip_duration)
+                    success = self._process_video_file(material, encoder, clip_duration, video_aspect)
                     if success:
                         processed_count += 1
                     else:
@@ -262,7 +262,7 @@ class VideoPreprocessor:
         
         return materials
     
-    def _process_video_file(self, material, encoder, clip_duration):
+    def _process_video_file(self, material, encoder, clip_duration, video_aspect: VideoAspect = VideoAspect.portrait):
         """处理单个视频文件"""
         try:
             # 1. 提取视频信息
@@ -272,13 +272,12 @@ class VideoPreprocessor:
                 return False
             
             # 2. 判断是否需要处理
-            process_config = self._determine_processing_needs(video_info, material.url)
+            process_config = self._determine_processing_needs(video_info, material.url, video_aspect)
             
             # 如果不需要处理，直接返回成功
             if not process_config.get("needs_processing", False):
                 logger.info(f"视频无需处理: {os.path.basename(material.url)}")
                 return True
-            
             # 3. 执行视频处理
             return self._execute_video_processing(material, video_info, process_config, encoder, clip_duration)
         except Exception as e:
@@ -359,106 +358,91 @@ class VideoPreprocessor:
             return False
         return True
     
-    def _determine_processing_needs(self, video_info, file_path):
-        """确定视频处理需求"""
-        # 提取视频基本信息 - 现在video_info是对象而非字典
+    def _determine_processing_needs(self, video_info, file_path, video_aspect: VideoAspect = VideoAspect.portrait):
+        """确定视频处理需求 - 统一旋转处理流程"""
+        # 提取视频基本信息
         width = video_info.width
         height = video_info.height
         rotation = video_info.rotation
         codec = video_info.codec
         
-        # 文件扩展名
-        _, ext = os.path.splitext(file_path)
-        ext = ext.lower()
+        # 标准化旋转角度为90的倍数
+        if rotation != 0:
+            rotation = VideoMetadataExtractor.normalize_rotation(rotation)
+            video_info.rotation = rotation
+            logger.info(f"标准化旋转角度: {rotation}°")
         
-        # 如果视频维度无效，不处理
-        if width <= 0 or height <= 0:
-            logger.warning(f"视频尺寸无效: {width}x{height}")
-            return {"needs_processing": False}
+        # 计算旋转后的有效尺寸
+        effective_width, effective_height = width, height
+        if rotation in [90, 270]:
+            effective_width, effective_height = height, width
+            logger.info(f"检测到旋转视频：实际尺寸{width}x{height}，有效尺寸{effective_width}x{effective_height}")
+        
+        # 确定目标尺寸
+        target_width, target_height = video_aspect.to_resolution()
         
         # 初始化配置
         config = {
-            "needs_processing": False,
-            "needs_rotation": False,
-            "needs_scaling": False,
-            "needs_padding": False,  # 新增参数，表示需要填充黑边
-            "use_metadata_rotation": False,
-            "target_width": width,
-            "target_height": height,
-            "is_4k": width * height >= 3840 * 2160,
-            "is_high_quality": width >= 1920 or height >= 1920
+            "needs_processing": False,  # 是否需要任何处理
+            "needs_rotation": False,    # 是否需要物理旋转
+            "needs_scaling": False,     # 是否需要缩放
+            "needs_padding": False,     # 是否需要填充
+            "needs_encoding": False,    # 是否需要编码转换
+            "needs_antialias": False,   # 是否需要抗锯齿处理
+            "target_width": target_width,
+            "target_height": target_height,
+            "is_high_quality": False,   # 是否为高质量视频
+            "is_4k": width * height >= 3840 * 2160,  # 是否为4K视频
+            "bitrate_boost": 1.0        # 码率提升倍数
         }
         
-        # 判断是否为标准横屏视频(不考虑旋转)
-        is_standard_landscape = (width > height)
+        # 判断是否为高质量视频
+        config["is_high_quality"] = (width >= 1920 or height >= 1080) or (effective_width >= 1920 or effective_height >= 1920)
         
-        # 1. 检查编码是否需要转换
-        if codec.lower() not in ["h264", "avc"]:
-            config["needs_processing"] = True
-            logger.info(f"需要转换编码: {codec} -> h264")
+        # 判断视频方向 (基于有效尺寸)
+        is_portrait = effective_height > effective_width
         
-        # 2. 检查旋转是否需要处理
+        # 1. 判断是否需要旋转处理 - 统一使用物理旋转
         if rotation != 0:
-            # 标准化旋转角度为90的倍数
-            normalized_rotation = ((rotation + 45) // 90 * 90) % 360
+            # 对所有旋转视频统一使用物理旋转
+            config["needs_rotation"] = True
+            config["needs_processing"] = True
+            config["needs_antialias"] = True  # 添加抗锯齿处理
+            logger.info(f"检测到视频旋转{rotation}°，将使用物理旋转")
             
-            # 更新对象属性而非字典键值
-            # 错误代码：video_info["rotation"] = normalized_rotation
-            # 正确方式：为对象赋值
-            if hasattr(video_info, 'rotation'):
-                video_info.rotation = normalized_rotation
-            
-            # 判断旋转后的有效尺寸
-            effective_width, effective_height = width, height
-            if normalized_rotation in [90, 270]:
-                effective_width, effective_height = height, width
-            
-            # 高质量视频处理
-            if config["is_high_quality"]:
-                logger.info(f"对高质量视频处理旋转: {normalized_rotation}°")
-                
-                # 无论是AVC还是HEVC，高分辨率横屏视频都使用物理旋转+填充处理
-                if is_standard_landscape:
-                    config["needs_rotation"] = True
-                    config["needs_padding"] = True  # 添加填充需求
-                    logger.info("应用物理旋转并填充处理")
-                else:
-                    # 竖屏视频可以使用元数据旋转
-                    config["use_metadata_rotation"] = True
-                    logger.info("对竖屏视频使用元数据旋转")
-            else:
-                config["needs_rotation"] = True
-                logger.info(f"需要物理旋转视频: {normalized_rotation}°")
+            # 对旋转视频提升码率补偿细节损失
+            if is_portrait:
+                config["bitrate_boost"] = 1.2  # 竖屏旋转内容提升20%码率
+                logger.info("竖屏旋转内容提升20%码率以补偿细节损失")
         
-        # 3. 特殊处理：所有高分辨率视频的统一处理
-        if config["is_high_quality"] and is_standard_landscape:
-            logger.info("检测到高分辨率标准横屏视频，应用专业处理")
-            
-            # 对于所有高分辨率视频都采用统一处理方式
-            if rotation != 0:
-                config["needs_processing"] = True
-                
-                # 确保AVC和HEVC都处理正确 - 修复关键问题
-                config["needs_rotation"] = True  # 使用物理旋转
-                config["needs_padding"] = True   # 确保添加填充
-                
-                logger.info(f"高分辨率{codec}视频旋转处理：添加物理旋转和填充")
+        # 2. 判断是否需要编码转换
+        if codec.lower() != "h264":
+            config["needs_encoding"] = True
+            config["needs_processing"] = True
+            logger.info(f"需要编码转换: {codec} -> h264")
         
-        # 4. 检查尺寸是否需要调整
-        max_width = 1920
-        max_height = 1920
-        
-        if width > max_width or height > max_height:
+        # 3. 判断是否需要缩放和填充
+        # 检查尺寸是否匹配目标尺寸
+        if effective_width != target_width or effective_height != target_height:
             config["needs_scaling"] = True
             config["needs_processing"] = True
             
-            # 保持宽高比
-            scale_ratio = min(max_width / width, max_height / height)
-            config["target_width"] = int(width * scale_ratio)
-            config["target_height"] = int(height * scale_ratio)
+            # 计算源视频和目标视频的宽高比
+            source_ratio = effective_width / effective_height if effective_height > 0 else 1.0
+            target_ratio = target_width / target_height if target_height > 0 else 1.0
             
-            logger.info(f"需要调整尺寸: {width}x{height} -> {config['target_width']}x{config['target_height']}")
+            # 如果宽高比差异超过阈值，需要填充
+            ratio_diff = abs(target_ratio - source_ratio)
+            if ratio_diff > 0.01:
+                config["needs_padding"] = True
+                logger.info(f"需要填充处理：原始比例 {source_ratio:.2f}，目标比例 {target_ratio:.2f}")
         
+        # 4. 特殊处理4K视频
+        if config["is_4k"]:
+            config["bitrate_boost"] *= 1.5  # 4K内容额外提升50%码率
+            logger.info("4K视频内容提升50%码率以保持画质")
+        
+        logger.info(f"视频处理配置: {config}")
         return config
 
     def _execute_video_processing(self, material, video_info, config, encoder, clip_duration):
@@ -576,56 +560,64 @@ class VideoPreprocessor:
             return False
 
     def _build_filter_string(self, video_info, config):
-        """构建视频滤镜字符串"""
+        """构建视频滤镜字符串 - 优化旋转和缩放效果"""
         filters = []
         
-        width = int(video_info.get("width", 0))
-        height = int(video_info.get("height", 0))
-        rotation = int(video_info.get("rotation", 0))
+        # 提取基本信息
+        width = video_info.width
+        height = video_info.height
+        rotation = video_info.rotation
         
-        # 计算旋转后的有效尺寸
+        # 计算有效尺寸 - 考虑旋转因素
         effective_width, effective_height = width, height
         if rotation in [90, 270]:
             effective_width, effective_height = height, width
         
-        # 1. 旋转滤镜(如果需要)
-        if config["needs_rotation"]:
-            rotation_filters = {
-                90: "transpose=1",     # 顺时针90度
-                180: "transpose=2,transpose=2",  # 180度
-                270: "transpose=2"     # 逆时针90度(相当于顺时针270度)
-            }
+        # 1. 旋转滤镜(如果需要物理旋转)
+        # if config.get("needs_rotation", False):
+        #     rotation_filters = {
+        #         90: "transpose=2",     #  90度旋转 (需顺时针270度校正) -> transpose=2
+        #         180: "hflip,vflip",  # 180度旋转 -> 垂直和水平翻转
+        #         270: "transpose=0"     # 270度旋转 (需顺时针90度校正) -> transpose=0
+        #     }
             
-            if rotation in rotation_filters:
-                filters.append(rotation_filters[rotation])
+        #     if rotation in rotation_filters:
+        #         filters.append(rotation_filters[rotation])
+        #         logger.info(f"应用物理旋转滤镜: {rotation_filters[rotation]}")
         
-        # 2. 缩放和填充滤镜
-        target_width = config["target_width"]
-        target_height = config["target_height"]
+        # 2. 抗锯齿处理(如果需要)
+        if config.get("needs_antialias", False):
+            # 添加smartblur滤镜以防止旋转引起的锯齿
+            # 3:0.8:0 参数分别是：半径，强度，阈值
+            filters.append("smartblur=3:0.8:0")
+            logger.info("应用smartblur滤镜防止旋转引起的锯齿")
         
-        # 计算目标宽高比
-        target_ratio = target_width / target_height
+        # 3. 缩放和填充处理
+        target_width = config.get("target_width", 1080)
+        target_height = config.get("target_height", 1920)
         
-        # 对于高分辨率且需要旋转的视频，特别处理填充
-        if config["needs_padding"] or (config["is_high_quality"] and config["needs_rotation"]):
-            # 先确保等比例缩放
+        # 所有视频使用统一的缩放和填充逻辑
+        if config.get("needs_scaling", False):
+            # 计算最佳缩放比例，保持宽高比
             scale_ratio = min(target_width / effective_width, target_height / effective_height)
             scaled_width = int(effective_width * scale_ratio)
             scaled_height = int(effective_height * scale_ratio)
             
-            # 构建填充滤镜：先缩放，再填充黑边以适应目标分辨率
+            # 高质量缩放处理
+            # 使用lanczos算法以获得更好的缩放质量
             scale_filter = f"scale={scaled_width}:{scaled_height}:flags=lanczos"
-            pad_filter = f",pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:color=black"
             
-            filters.append(scale_filter + pad_filter)
-            logger.info(f"应用缩放与填充: 缩放至{scaled_width}x{scaled_height}并填充至{target_width}x{target_height}")
-        elif config["needs_scaling"]:
-            # 常规缩放处理
-            scale_filter = f"scale={target_width}:{target_height}:flags=lanczos"
+            if config.get("needs_padding", False) or scaled_width != target_width or scaled_height != target_height:
+                # 添加填充以适应目标分辨率
+                pad_filter = f",pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:color=black"
+                scale_filter += pad_filter
+                logger.info(f"应用缩放与填充: 缩放至{scaled_width}x{scaled_height}并填充至{target_width}x{target_height}")
+            else:
+                logger.info(f"应用精确缩放: {width}x{height} -> {target_width}x{target_height}")
+            
             filters.append(scale_filter)
-            logger.info(f"应用常规缩放: {width}x{height} -> {target_width}x{target_height}")
         
-        # 3. 确保输出为yuv420p格式(兼容性更好)
+        # 4. 确保输出为yuv420p格式(兼容性更好)
         filters.append("format=yuv420p")
         
         # 组合所有滤镜
@@ -634,7 +626,7 @@ class VideoPreprocessor:
         return filter_string
 
     def _build_ffmpeg_command(self, input_path, output_path, encoder, vf_filter, input_params, encoder_params, config):
-        """构建FFMPEG命令"""
+        """构建FFMPEG命令 - 智能码率控制"""
         cmd = ["ffmpeg", "-y"]
         
         # 添加输入参数
@@ -647,13 +639,24 @@ class VideoPreprocessor:
         if vf_filter and vf_filter != "null":
             cmd.extend(["-vf", vf_filter])
         
-        # 如果使用元数据旋转，添加特殊参数
-        if config["use_metadata_rotation"]:
-            # 复制视频流中的元数据
-            cmd.extend(["-metadata:s:v:0", "rotate=0"])
-        
         # 添加视频编码器
         cmd.extend(["-c:v", encoder])
+        
+        # 应用智能码率提升 (如果配置中有指定)
+        bitrate_boost = config.get("bitrate_boost", 1.0)
+        if bitrate_boost > 1.0:
+            # 提取并应用增强的码率参数
+            if "bitrate" in encoder_params:
+                original_bitrate = encoder_params["bitrate"]
+                boosted_bitrate = int(original_bitrate * bitrate_boost)
+                encoder_params["bitrate"] = boosted_bitrate
+                logger.info(f"应用码率提升: {original_bitrate}k -> {boosted_bitrate}k (x{bitrate_boost:.2f})")
+            
+            if "maxrate" in encoder_params:
+                encoder_params["maxrate"] = int(encoder_params["maxrate"] * bitrate_boost)
+            
+            if "bufsize" in encoder_params:
+                encoder_params["bufsize"] = int(encoder_params["bufsize"] * bitrate_boost)
         
         # 提取并添加编码器特定参数
         bitrate = encoder_params.pop("bitrate", None)
@@ -671,12 +674,17 @@ class VideoPreprocessor:
         for key, value in encoder_params.items():
             cmd.extend([f"-{key}", str(value)])
         
-        # 复制音频流
-        cmd.extend(["-c:a", "copy"])
+        # 音频处理
+        cmd.extend(["-c:a", "aac", "-b:a", "128k"])
+        
+        # 清除旋转元数据，确保视频在所有播放器中正确显示
+        cmd.extend(["-metadata:s:v", "rotate=0"])
+        cmd.extend(["-metadata:s:v:0", "rotate=0"])
         
         # 添加输出文件
         cmd.append(output_path)
         
+        logger.info(f"FFMPEG命令: {' '.join(cmd)}")
         return cmd
 
     def _run_ffmpeg_command(self, cmd):

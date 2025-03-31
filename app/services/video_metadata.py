@@ -174,17 +174,32 @@ class VideoMetadataExtractor:
         return MediaInfoExtractor.is_available()
     
     @staticmethod
-    def normalize_rotation(rotation: float) -> int:
-        """标准化旋转角度（确保是90的倍数，并且为正值）"""
-        try:
-            rotation_float = float(rotation)
-            rotation = int(round(rotation_float / 90) * 90) % 360
-            if rotation < 0:
-                rotation = (360 + rotation) % 360
-            return rotation
-        except (ValueError, TypeError):
-            logger.warning(f"⚠️ 标准化旋转角度失败，输入值: {rotation}，使用默认值0")
-            return 0
+    def normalize_rotation(rotation):
+        """
+        标准化旋转角度为90的倍数
+        
+        Args:
+            rotation: 原始旋转角度
+            
+        Returns:
+            标准化后的旋转角度 (0, 90, 180, 270)
+        """
+        # 将角度四舍五入到最接近的90度倍数
+        normalized_rotation = ((rotation + 45) // 90 * 90) % 360
+        
+        # 确保角度为 0, 90, 180, 270
+        if normalized_rotation not in [0, 90, 180, 270]:
+            # 安全处理：如果仍然不是标准角度，使用最接近的90度角
+            if normalized_rotation < 45:
+                normalized_rotation = 0
+            elif normalized_rotation < 135:
+                normalized_rotation = 90
+            elif normalized_rotation < 225:
+                normalized_rotation = 180
+            else:
+                normalized_rotation = 270
+        
+        return normalized_rotation
     
     @staticmethod
     def get_basic_metadata(video_path: str) -> VideoBasicMetadata:

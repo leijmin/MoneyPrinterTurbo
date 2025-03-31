@@ -30,12 +30,12 @@ from app.services.video_encoder import EncoderConfig
 from app.services.video_processing import VideoProcessor
 
 # 预处理视频 给外部调用
-def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
+def preprocess_video(materials: List[MaterialInfo], clip_duration=4, video_aspect: VideoAspect = VideoAspect.portrait):
     """
     使用ffmpeg处理视频和图片素材
     """
     # 调用新模块的实现
-    return VideoPreprocessor.preprocess_video(materials, clip_duration)
+    return VideoPreprocessor.preprocess_video(materials, clip_duration, video_aspect)
 
 
 def get_bgm_file(bgm_type: str = "random", bgm_file: str = ""):
@@ -85,7 +85,7 @@ def combine_videos(
     if not video_paths:
         logger.error("没有输入视频文件")
         return None
-        
+    
     if not os.path.exists(audio_file):
         logger.error(f"音频文件不存在: {audio_file}")
         return None
@@ -114,7 +114,6 @@ def combine_videos(
         processed_segments = []
         segment_index = 0
         
-        # 在combine_videos函数的开始部分，预处理MOV格式视频
         processed_video_paths = []
 
         for idx, video_path in enumerate(video_paths):
@@ -122,38 +121,7 @@ def combine_videos(
                 if not os.path.exists(video_path):
                     logger.error(f"视频文件不存在: {video_path}")
                     continue
-                
-                # 检查是否需要预处理MOV文件
-                if video_path.lower().endswith('.mov'):
-                    # 创建临时MP4文件
-                    temp_mp4_path = os.path.join(temp_dir, f"preprocess_{idx}_{uuid.uuid4()}.mp4")
-                    
-                    logger.info(f"将MOV格式预处理为MP4: {os.path.basename(video_path)}")
-                    
-                    # 使用FFmpeg直接转换，保持所有流不变，但明确设置旋转元数据为0
-                    preprocess_cmd = [
-                        "ffmpeg", "-y",
-                        "-i", video_path,
-                        "-c:v", "copy",      # 直接复制视频流
-                        "-c:a", "copy",      # 直接复制音频流
-                        "-metadata:s:v", "rotate=0",  # 清除旋转元数据
-                        "-metadata:s:v:0", "rotate=0",
-                        temp_mp4_path
-                    ]
-                    
-                    # 执行命令
-                    subprocess.run(preprocess_cmd, check=True, capture_output=True)
-                    
-                    if os.path.exists(temp_mp4_path) and os.path.getsize(temp_mp4_path) > 0:
-                        # 使用处理后的MP4文件
-                        processed_video_paths.append(temp_mp4_path)
-                        logger.info(f"MOV预处理成功: {temp_mp4_path}")
-                    else:
-                        # 使用原始文件
-                        processed_video_paths.append(video_path)
-                        logger.warning(f"MOV预处理失败，使用原文件: {video_path}")
-                else:
-                    # 非MOV格式直接使用
+
                     processed_video_paths.append(video_path)
             except Exception as e:
                 logger.error(f"预处理视频失败: {str(e)}")
@@ -252,34 +220,7 @@ def combine_videos(
                     
                     # 应用旋转和缩放滤镜
                     filters = []
-                    
-                    # 检查是否为MOV格式
-                    is_mov_format = video_path.lower().endswith('.mov')
-                    
-                    # 1. 添加旋转滤镜(如果需要)
-                    if rotation != 0:
-                        if is_mov_format:
-                            logger.info(f"处理MOV格式视频片段: {os.path.basename(video_path)}, 旋转角度={rotation}°")
-                        
-                        if rotation == 90:
-                            filters.append("transpose=1")  # 顺时针旋转90度
-                        elif rotation == 180:
-                            filters.append("transpose=2,transpose=2")  # 旋转180度
-                        elif rotation == 270 or rotation == -90:
-                            filters.append("transpose=2")  # 逆时针旋转90度
-                    
-                    # 2. 使用优化后的缩放和裁剪/填充滤镜
-                    try:
-                        # 考虑旋转后的尺寸
-                        scale_crop_filter, _ = VideoPreprocessor.get_optimal_scale_mode(
-                            effective_width, effective_height, target_width, target_height
-                        )
-                        filters.append(scale_crop_filter.lstrip(","))
-                    except Exception as e:
-                        logger.error(f"获取缩放模式失败: {str(e)}")
-                        # 使用安全默认值
-                        filters.append(f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:color=black")
-                    
+          
                     # 3. 添加像素格式确保兼容性
                     filters.append("format=yuv420p")
                     
@@ -301,12 +242,7 @@ def combine_videos(
                         "-pix_fmt", "yuv420p"
                     ]
                     
-                    # 关键改动: 对MOV格式添加特殊处理，确保清除旋转元数据
-                    if is_mov_format:
-                        segment_cmd.extend([
-                            "-metadata:s:v", "rotate=0",  # 明确移除旋转元数据
-                            "-metadata:s:v:0", "rotate=0"  # 确保所有视频流的旋转元数据都被清除
-                        ])
+            
                     
                     segment_cmd.append(segment_path)
                     
@@ -441,7 +377,7 @@ def generate_video(
     try:
         logger.info("使用ffmpeg生成视频")
         temp_dir = os.path.dirname(output_file)
-        
+        return None
         # 创建中间处理文件路径
         processed_video = os.path.join(temp_dir, f"processed_{str(uuid.uuid4())}.mp4")
         
@@ -539,11 +475,7 @@ def generate_video(
             else:
                 full_filter = "format=yuv420p"
             
-            # 检查是否为MOV格式，增强日志帮助诊断
-            is_mov_format = video_path.lower().endswith('.mov')
-            if is_mov_format:
-                logger.info(f"处理MOV格式视频: 旋转角度={video_features['rotation']}°, " +
-                            f"需要旋转={video_features['needs_rotation']}, 应用滤镜: {full_filter}")
+           
             
             # 构建视频处理命令
             video_cmd = [
