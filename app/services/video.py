@@ -97,25 +97,18 @@ def combine_videos(
     Returns:
         合并后的视频路径
     """
-    # 调用纯ffmpeg实现
-    logger.info("使用纯ffmpeg方法合并视频")
-    if not video_paths:
-        logger.error("没有输入视频文件")
-        return None
-    return None
-    if not os.path.exists(audio_file):
-        logger.error(f"音频文件不存在: {audio_file}")
-        return None
-    
-    # 创建临时目录
-    temp_dir = os.path.join(os.path.dirname(combined_video_path), f"temp_combine_{str(uuid.uuid4())}")
-    os.makedirs(temp_dir, exist_ok=True)
-    
-    # 记录需要清理的临时文件
-    processed_paths = []
-    segment_files = []
-    
     try:
+        # 确保输出目录存在
+        os.makedirs(os.path.dirname(combined_video_path), exist_ok=True)
+        
+        # 创建临时目录
+        temp_dir = os.path.join(os.path.dirname(combined_video_path), "temp_combine_" + str(uuid.uuid4()))
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # 记录需要清理的临时文件
+        processed_paths = []
+        segment_files = []
+        
         # 获取音频时长
         audio_probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", audio_file]
         audio_info = json.loads(subprocess.check_output(audio_probe_cmd, universal_newlines=True))
@@ -356,40 +349,85 @@ def combine_videos(
                 # 如果时长明显不对，尝试使用filter_complex方式重新合并
                 if total_duration > sum(segment_duration for segment_duration in [10.0, 4.16, 10.0]):
                     logger.warning("检测到时长异常，使用filter_complex方式重新合并")
-                    filter_complex = []
-                    for i, segment in enumerate(normalized_segments):
-                        filter_complex.append(f"[{i}:v]setpts=PTS-STARTPTS[v{i}]")
                     
-                    # 添加连接
-                    for i in range(len(normalized_segments) - 1):
-                        filter_complex.append(f"[v{i}][v{i+1}]concat=n=2:v=1:a=0[outv{i+1}]")
+                    # 创建concat文件，使用demuxer方式重新合并
+                    concat_file = os.path.join(temp_dir, "concat.txt")
+                    with open(concat_file, "w", encoding="utf-8") as f:
+                        for segment in normalized_segments:
+                            f.write(f"file '{segment}'\n")
                     
-                    # 构建新的合并命令
-                    new_concat_cmd = ["ffmpeg", "-y"]
-                    for segment in normalized_segments:
-                        new_concat_cmd.extend(["-i", segment])
-                    
-                    new_concat_cmd.extend([
-                        "-filter_complex", ";".join(filter_complex),
-                        "-map", f"[outv{len(normalized_segments)-1}]",
+                    # 使用concat demuxer方式合并视频
+                    new_concat_cmd = [
+                        "ffmpeg", "-y",
+                        "-f", "concat",
+                        "-safe", "0",
+                        "-i", concat_file,
                         "-c:v", "libx264",
                         "-preset", "fast",
                         "-crf", "23",
                         "-pix_fmt", "yuv420p",
                         "-r", "60",
                         "-vsync", "cfr",
-                        "-max_muxing_queue_size", "1024",
                         concat_output_path
-                    ])
+                    ]
                     
-                    subprocess.run(new_concat_cmd, check=True, capture_output=True)
+                    logger.info(f"使用concat demuxer方式重新合并: {' '.join(new_concat_cmd)}")
                     
-                    # 再次验证时长
-                    probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
-                    if probe_result.returncode == 0:
-                        duration_info = json.loads(probe_result.stdout)
-                        new_duration = float(duration_info["format"]["duration"])
-                        logger.info(f"重新合并后视频总时长: {new_duration:.2f}秒")
+                    try:
+                        subprocess.run(new_concat_cmd, check=True, capture_output=True)
+                        
+                        # 再次验证时长
+                        probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+                        if probe_result.returncode == 0:
+                            duration_info = json.loads(probe_result.stdout)
+                            new_duration = float(duration_info["format"]["duration"])
+                            logger.info(f"重新合并后视频总时长: {new_duration:.2f}秒")
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"使用concat demuxer方式合并失败: {e.stderr.decode('utf-8', errors='replace') if e.stderr else ''}")
+                        
+                        # 如果demuxer方式也失败，尝试使用改进的filter_complex方式
+                        logger.warning("尝试使用改进的filter_complex方式合并")
+                        
+                        # 构建改进的filter_complex字符串
+                        filter_parts = []
+                        
+                        # 第1步：为每个输入添加setpts过滤器
+                        for i in range(len(normalized_segments)):
+                            filter_parts.append(f"[{i}:v]setpts=PTS-STARTPTS[v{i}]")
+                        
+                        # 第2步：构建单个concat过滤器，连接所有视频
+                        concat_inputs = "".join(f"[v{i}]" for i in range(len(normalized_segments)))
+                        filter_parts.append(f"{concat_inputs}concat=n={len(normalized_segments)}:v=1:a=0[outv]")
+                        
+                        # 构建新的合并命令
+                        complex_cmd = ["ffmpeg", "-y"]
+                        for segment in normalized_segments:
+                            complex_cmd.extend(["-i", segment])
+                        
+                        complex_cmd.extend([
+                            "-filter_complex", ";".join(filter_parts),
+                            "-map", "[outv]",
+                            "-c:v", "libx264",
+                            "-preset", "fast",
+                            "-crf", "23",
+                            "-pix_fmt", "yuv420p",
+                            "-r", "60",
+                            concat_output_path
+                        ])
+                        
+                        logger.info(f"使用改进的filter_complex方式合并: {' '.join(complex_cmd)}")
+                        
+                        try:
+                            subprocess.run(complex_cmd, check=True, capture_output=True)
+                            
+                            # 再次验证时长
+                            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+                            if probe_result.returncode == 0:
+                                duration_info = json.loads(probe_result.stdout)
+                                new_duration = float(duration_info["format"]["duration"])
+                                logger.info(f"改进方式合并后视频总时长: {new_duration:.2f}秒")
+                        except subprocess.CalledProcessError as e:
+                            logger.error(f"使用改进的filter_complex方式合并也失败: {e.stderr.decode('utf-8', errors='replace') if e.stderr else ''}")
         except subprocess.CalledProcessError as e:
             logger.error(f"合并视频片段失败: {e.stderr.decode('utf-8', errors='replace') if e.stderr else ''}")
             return None
