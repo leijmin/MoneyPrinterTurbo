@@ -64,7 +64,9 @@ class VideoParams(BaseModel):
       "text_color": "#FFFFFF",
       "font_size": 60,
       "stroke_color": "#000000",
-      "stroke_width": 1.5
+      "stroke_width": 1.5,
+      "watermark_text": "AI视频生成器",
+      "watermark_size": 20
     }
     """
 
@@ -103,6 +105,9 @@ class VideoParams(BaseModel):
     stroke_width: float = 1.5
     n_threads: Optional[int] = 2
     paragraph_number: Optional[int] = 1
+
+    watermark_text: Optional[str] = "品创机械"
+    watermark_size: Optional[int] = 68
 
 
 class SubtitleRequest(BaseModel):

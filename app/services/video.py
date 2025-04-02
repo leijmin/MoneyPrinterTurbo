@@ -29,6 +29,7 @@ import shutil
 import uuid
 import math
 import shlex  # 添加shlex模块导入
+import sys
 
 from loguru import logger
 from PIL import ImageFont
@@ -46,6 +47,7 @@ from app.utils import utils
 from app.services.video_metadata import VideoMetadataExtractor
 from app.services.preprocess_video import VideoPreprocessor
 
+ 
 # 预处理视频 给外部调用
 def preprocess_video(materials: List[MaterialInfo], clip_duration=4, video_aspect: VideoAspect = VideoAspect.portrait):
     """
@@ -97,25 +99,18 @@ def combine_videos(
     Returns:
         合并后的视频路径
     """
-    # 调用纯ffmpeg实现
-    logger.info("使用纯ffmpeg方法合并视频")
-    if not video_paths:
-        logger.error("没有输入视频文件")
-        return None
-    return None
-    if not os.path.exists(audio_file):
-        logger.error(f"音频文件不存在: {audio_file}")
-        return None
-    
-    # 创建临时目录
-    temp_dir = os.path.join(os.path.dirname(combined_video_path), f"temp_combine_{str(uuid.uuid4())}")
-    os.makedirs(temp_dir, exist_ok=True)
-    
-    # 记录需要清理的临时文件
-    processed_paths = []
-    segment_files = []
-    
     try:
+        # 确保输出目录存在
+        os.makedirs(os.path.dirname(combined_video_path), exist_ok=True)
+        
+        # 创建临时目录
+        temp_dir = os.path.join(os.path.dirname(combined_video_path), "temp_combine_" + str(uuid.uuid4()))
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # 记录需要清理的临时文件
+        processed_paths = []
+        segment_files = []
+        
         # 获取音频时长
         audio_probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", audio_file]
         audio_info = json.loads(subprocess.check_output(audio_probe_cmd, universal_newlines=True))
@@ -356,40 +351,85 @@ def combine_videos(
                 # 如果时长明显不对，尝试使用filter_complex方式重新合并
                 if total_duration > sum(segment_duration for segment_duration in [10.0, 4.16, 10.0]):
                     logger.warning("检测到时长异常，使用filter_complex方式重新合并")
-                    filter_complex = []
-                    for i, segment in enumerate(normalized_segments):
-                        filter_complex.append(f"[{i}:v]setpts=PTS-STARTPTS[v{i}]")
                     
-                    # 添加连接
-                    for i in range(len(normalized_segments) - 1):
-                        filter_complex.append(f"[v{i}][v{i+1}]concat=n=2:v=1:a=0[outv{i+1}]")
+                    # 创建concat文件，使用demuxer方式重新合并
+                    concat_file = os.path.join(temp_dir, "concat.txt")
+                    with open(concat_file, "w", encoding="utf-8") as f:
+                        for segment in normalized_segments:
+                            f.write(f"file '{segment}'\n")
                     
-                    # 构建新的合并命令
-                    new_concat_cmd = ["ffmpeg", "-y"]
-                    for segment in normalized_segments:
-                        new_concat_cmd.extend(["-i", segment])
-                    
-                    new_concat_cmd.extend([
-                        "-filter_complex", ";".join(filter_complex),
-                        "-map", f"[outv{len(normalized_segments)-1}]",
+                    # 使用concat demuxer方式合并视频
+                    new_concat_cmd = [
+                        "ffmpeg", "-y",
+                        "-f", "concat",
+                        "-safe", "0",
+                        "-i", concat_file,
                         "-c:v", "libx264",
                         "-preset", "fast",
                         "-crf", "23",
                         "-pix_fmt", "yuv420p",
                         "-r", "60",
                         "-vsync", "cfr",
-                        "-max_muxing_queue_size", "1024",
                         concat_output_path
-                    ])
+                    ]
                     
-                    subprocess.run(new_concat_cmd, check=True, capture_output=True)
+                    logger.info(f"使用concat demuxer方式重新合并: {' '.join(new_concat_cmd)}")
                     
-                    # 再次验证时长
-                    probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
-                    if probe_result.returncode == 0:
-                        duration_info = json.loads(probe_result.stdout)
-                        new_duration = float(duration_info["format"]["duration"])
-                        logger.info(f"重新合并后视频总时长: {new_duration:.2f}秒")
+                    try:
+                        subprocess.run(new_concat_cmd, check=True, capture_output=True)
+                        
+                        # 再次验证时长
+                        probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+                        if probe_result.returncode == 0:
+                            duration_info = json.loads(probe_result.stdout)
+                            new_duration = float(duration_info["format"]["duration"])
+                            logger.info(f"重新合并后视频总时长: {new_duration:.2f}秒")
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"使用concat demuxer方式合并失败: {e.stderr.decode('utf-8', errors='replace') if e.stderr else ''}")
+                        
+                        # 如果demuxer方式也失败，尝试使用改进的filter_complex方式
+                        logger.warning("尝试使用改进的filter_complex方式合并")
+                        
+                        # 构建改进的filter_complex字符串
+                        filter_parts = []
+                        
+                        # 第1步：为每个输入添加setpts过滤器
+                        for i in range(len(normalized_segments)):
+                            filter_parts.append(f"[{i}:v]setpts=PTS-STARTPTS[v{i}]")
+                        
+                        # 第2步：构建单个concat过滤器，连接所有视频
+                        concat_inputs = "".join(f"[v{i}]" for i in range(len(normalized_segments)))
+                        filter_parts.append(f"{concat_inputs}concat=n={len(normalized_segments)}:v=1:a=0[outv]")
+                        
+                        # 构建新的合并命令
+                        complex_cmd = ["ffmpeg", "-y"]
+                        for segment in normalized_segments:
+                            complex_cmd.extend(["-i", segment])
+                        
+                        complex_cmd.extend([
+                            "-filter_complex", ";".join(filter_parts),
+                            "-map", "[outv]",
+                            "-c:v", "libx264",
+                            "-preset", "fast",
+                            "-crf", "23",
+                            "-pix_fmt", "yuv420p",
+                            "-r", "60",
+                            concat_output_path
+                        ])
+                        
+                        logger.info(f"使用改进的filter_complex方式合并: {' '.join(complex_cmd)}")
+                        
+                        try:
+                            subprocess.run(complex_cmd, check=True, capture_output=True)
+                            
+                            # 再次验证时长
+                            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+                            if probe_result.returncode == 0:
+                                duration_info = json.loads(probe_result.stdout)
+                                new_duration = float(duration_info["format"]["duration"])
+                                logger.info(f"改进方式合并后视频总时长: {new_duration:.2f}秒")
+                        except subprocess.CalledProcessError as e:
+                            logger.error(f"使用改进的filter_complex方式合并也失败: {e.stderr.decode('utf-8', errors='replace') if e.stderr else ''}")
         except subprocess.CalledProcessError as e:
             logger.error(f"合并视频片段失败: {e.stderr.decode('utf-8', errors='replace') if e.stderr else ''}")
             return None
@@ -659,53 +699,233 @@ def generate_video(
                 logger.error(f"处理字幕时出错: {str(e)}")
                 subtitle_filter = ""
 
-        # 构建最终滤镜字符串
+        # 构建基本滤镜
         filter_complex = []
         
         # 添加可能需要的其他滤镜
         if is_preprocessed:
             # 如果已预处理，只添加必要的滤镜
             filter_complex.append("format=yuv420p")
-        
-        # 添加字幕滤镜（如果有）
-        if subtitle_filter:
-            # 确保字幕滤镜格式正确，用单引号包围路径
-            if "subtitles=" in subtitle_filter and not "subtitles='" in subtitle_filter:
-                parts = subtitle_filter.split(':', 1)
-                if len(parts) == 2:
-                    path_part = parts[0]
-                    rest_part = parts[1]
-                    # 给路径加上单引号
-                    path_part = path_part.replace("subtitles=", "subtitles='") + "'"
-                    subtitle_filter = f"{path_part}:{rest_part}"
-            
-            filter_complex.append(subtitle_filter)
 
-        # 最终合并视频、音频
-        final_cmd = [
-            "ffmpeg", "-y",
-            "-i", video_path,
-            "-i", merged_audio
-        ]
+        # 添加水印滤镜
+        # 获取真实视频尺寸
+        video_width = metadata.width
+        video_height = metadata.height
         
-        # 应用滤镜（如果有）
-        if filter_complex:
-            final_cmd.extend(["-vf", ",".join(filter_complex)])
+        # 创建水印滤镜 - 使用项目自带的字体目录
+        watermark_vf = ""
+        try:
+            # 尝试获取与字幕相同的字体
+            font_name = params.font_name if params.font_name else "STHeitiMedium.ttc"
+            font_path = os.path.join(utils.font_dir(), font_name)
+            
+            # 如果字体不存在，尝试项目中的其他常用字体
+            if not os.path.exists(font_path):
+                for common_font in ["STHeitiMedium.ttc", "arial.ttf", "simhei.ttf"]:
+                    test_path = os.path.join(utils.font_dir(), common_font)
+                    if os.path.exists(test_path):
+                        font_path = test_path
+                        logger.info(f"使用替代字体: {common_font}")
+                        break
+            
+            # 确保字体存在
+            if os.path.exists(font_path):
+                # 准备字体路径
+                safe_font_path = os.path.abspath(font_path).replace('\\', '/')
+                
+                # Windows特殊处理
+                if os.name == "nt" and ":" in safe_font_path:
+                    drive, path = safe_font_path.split(":", 1)
+                    safe_font_path = f"{drive}\\:{path}"
+                
+                # 添加引号                                             
+                if not safe_font_path.startswith("'") and not safe_font_path.endswith("'"):
+                    safe_font_path = f"'{safe_font_path}'"
+                
+                watermark_font_size = params.watermark_size
+                # 创建带有字体的水印滤镜 - 使用计算表达式替代center关键字
+                watermark_vf = f"drawtext=text='{params.watermark_text}':fontfile={safe_font_path}:fontsize={watermark_font_size}:fontcolor=white@0.3:x=(w-text_w)/2:y=(h-text_h)/2"
+                logger.info(f"创建带字体的水印滤镜: {watermark_vf}")
+            else:
+                # 找不到字体时使用简单版本
+                watermark_vf = f"drawtext=text='{params.watermark_text}':fontsize={watermark_font_size}:fontcolor=white@0.3:x=(w-text_w)/2:y=(h-text_h)/2"
+                logger.info(f"未找到字体，使用简单水印滤镜: {watermark_vf}")
+        except Exception as e:
+            # 出错时使用最简单版本
+            watermark_vf = f"drawtext=text='{params.watermark_text}':fontsize={watermark_font_size}:fontcolor=white@0.3:x=(w-text_w)/2:y=(h-text_h)/2"
+            logger.error(f"创建水印滤镜出错: {str(e)}，使用简单版本")
         
-        # 输出参数
-        final_cmd.extend([
-            "-map", "0:v",
-            "-map", "1:a",
-            "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", "23",
-            "-c:a", "copy",
-            "-shortest",
-            "-pix_fmt", "yuv420p",
-            "-max_muxing_queue_size", "1024",  # 增加队列大小
-            "-movflags", "+faststart",  # 添加faststart标志提高流媒体兼容性
-            output_file
-        ])
+        logger.info(f"最终水印滤镜: {watermark_vf}")
+        
+        # 最终视频处理命令
+        if subtitle_filter:
+            # 有字幕的情况下，使用复杂filter_complex
+            vf = ""
+            if filter_complex:
+                # 如果有其他滤镜，先添加
+                base_filters = ",".join(filter_complex)
+                vf = f"{base_filters},{subtitle_filter}"
+            else:
+                vf = subtitle_filter
+            
+            # 为Windows特殊处理，避免命令行过长
+            if os.name == 'nt':
+                # 创建滤镜文件 - 仅包含字幕滤镜
+                filters_file = os.path.join(temp_dir, "subtitle_filters.txt")
+                try:
+                    with open(filters_file, "w", encoding="utf-8") as f:
+                        f.write(vf)  # 只写入字幕滤镜
+                    
+                    # 先应用字幕滤镜，生成中间视频
+                    intermediate_video = os.path.join(temp_dir, "with_subtitle.mp4")
+                    subtitle_cmd = [
+                        "ffmpeg", "-y",
+                        "-i", video_path,
+                        "-filter_complex_script", filters_file,
+                        "-c:v", "libx264",
+                        "-preset", "ultrafast",  # 使用超快速预设，因为这只是中间文件
+                        "-crf", "18",  # 保持较高质量
+                        "-pix_fmt", "yuv420p",
+                        intermediate_video
+                    ]
+                    
+                    logger.info("第一步：应用字幕滤镜...")
+                    logger.info(f"字幕滤镜: {vf}")
+                    subprocess.run(subtitle_cmd, check=True, capture_output=True)
+                    
+                    # 检查中间文件是否生成成功
+                    if not os.path.exists(intermediate_video) or os.path.getsize(intermediate_video) == 0:
+                        raise Exception("应用字幕滤镜后，中间文件创建失败")
+                    
+                    # 第二步：应用水印滤镜到中间视频，并添加音频
+                    logger.info("第二步：应用水印滤镜并添加音频...")
+                    logger.info(f"水印滤镜: {watermark_vf}")
+                    
+                    final_cmd = [
+                        "ffmpeg", "-y",
+                        "-i", intermediate_video,
+                        "-i", merged_audio,
+                        "-vf", watermark_vf,  # 应用水印滤镜
+                        "-map", "0:v",
+                        "-map", "1:a",
+                        "-c:v", "libx264",
+                        "-preset", "medium",
+                        "-crf", "23",
+                        "-c:a", "copy",
+                        "-shortest",
+                        "-pix_fmt", "yuv420p",
+                        "-max_muxing_queue_size", "1024",
+                        "-movflags", "+faststart",
+                        output_file
+                    ]
+                except Exception as e:
+                    logger.error(f"应用滤镜失败: {str(e)}")
+                    # 回退到没有滤镜的版本
+                    final_cmd = [
+                        "ffmpeg", "-y",
+                        "-i", video_path,
+                        "-i", merged_audio,
+                        "-map", "0:v",
+                        "-map", "1:a",
+                        "-c:v", "libx264",
+                        "-preset", "medium",
+                        "-crf", "23",
+                        "-c:a", "copy",
+                        "-shortest",
+                        "-pix_fmt", "yuv420p",
+                        "-max_muxing_queue_size", "1024",
+                        "-movflags", "+faststart",
+                        output_file
+                    ]
+            else:
+                # 非Windows系统，也采用两步处理方式确保最大兼容性
+                try:
+                    # 先应用字幕滤镜，生成中间视频
+                    intermediate_video = os.path.join(temp_dir, "with_subtitle.mp4")
+                    subtitle_cmd = [
+                        "ffmpeg", "-y",
+                        "-i", video_path,
+                        "-filter_complex", vf,  # 应用字幕滤镜
+                        "-c:v", "libx264",
+                        "-preset", "ultrafast",  # 使用超快速预设
+                        "-crf", "18",  # 保持较高质量
+                        "-pix_fmt", "yuv420p",
+                        intermediate_video
+                    ]
+                    
+                    logger.info("第一步：应用字幕滤镜...")
+                    logger.info(f"字幕滤镜: {vf}")
+                    subprocess.run(subtitle_cmd, check=True, capture_output=True)
+                    
+                    # 检查中间文件是否生成成功
+                    if not os.path.exists(intermediate_video) or os.path.getsize(intermediate_video) == 0:
+                        raise Exception("应用字幕滤镜后，中间文件创建失败")
+                    
+                    # 第二步：应用水印滤镜到中间视频，并添加音频
+                    logger.info("第二步：应用水印滤镜并添加音频...")
+                    logger.info(f"水印滤镜: {watermark_vf}")
+                    
+                    final_cmd = [
+                        "ffmpeg", "-y",
+                        "-i", intermediate_video,
+                        "-i", merged_audio,
+                        "-vf", watermark_vf,  # 应用水印滤镜
+                        "-map", "0:v",
+                        "-map", "1:a",
+                        "-c:v", "libx264",
+                        "-preset", "medium",
+                        "-crf", "23",
+                        "-c:a", "copy",
+                        "-shortest",
+                        "-pix_fmt", "yuv420p",
+                        "-max_muxing_queue_size", "1024",
+                        "-movflags", "+faststart",
+                        output_file
+                    ]
+                except Exception as e:
+                    logger.error(f"应用滤镜失败: {str(e)}")
+                    # 在某一步失败时回退到基本方式
+                    final_cmd = [
+                        "ffmpeg", "-y",
+                        "-i", video_path,
+                        "-i", merged_audio,
+                        "-filter_complex", vf,
+                        "-map", "0:v",
+                        "-map", "1:a",
+                        "-c:v", "libx264",
+                        "-preset", "medium",
+                        "-crf", "23",
+                        "-c:a", "copy",
+                        "-shortest",
+                        "-pix_fmt", "yuv420p",
+                        "-max_muxing_queue_size", "1024",
+                        "-movflags", "+faststart",
+                        output_file
+                    ]
+        else:
+            # 只有水印，没有字幕
+            vf = watermark_vf
+            if filter_complex:
+                vf = f"{','.join(filter_complex)},{watermark_vf}"
+            
+            # 在Windows和非Windows系统上使用相同的简单方法
+            final_cmd = [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-i", merged_audio,
+                "-vf", vf,
+                "-map", "0:v",
+                "-map", "1:a",
+                "-c:v", "libx264",
+                "-preset", "medium",
+                "-crf", "23",
+                "-c:a", "copy",
+                "-shortest",
+                "-pix_fmt", "yuv420p",
+                "-max_muxing_queue_size", "1024",
+                "-movflags", "+faststart",
+                output_file
+            ]
         
         logger.info("生成最终视频...")
         logger.info(f"FFmpeg命令: {' '.join(final_cmd)}")
@@ -753,9 +973,115 @@ def generate_video(
 
 
 if __name__ == "__main__":
-    # 原有的测试代码
-    m = MaterialInfo()
-    m.url = "/Users/harry/Downloads/IMG_2915.JPG"
-    m.provider = "local"
-    materials = VideoPreprocessor.preprocess_video([m], clip_duration=4)
-    print(materials)
+    # 测试代码
+    import sys
+    
+    def test_watermark():
+        """测试水印功能"""
+        if len(sys.argv) < 3:
+            print("使用方法: python -m app.services.video test-watermark 视频文件路径")
+            return
+            
+        input_video = sys.argv[2]
+        if not os.path.exists(input_video):
+            print(f"错误: 视频文件不存在: {input_video}")
+            return
+            
+        # 获取视频元数据
+        try:
+            # 使用JSON格式获取视频尺寸
+            json_cmd = [
+                "ffprobe",
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-of", "json",
+                input_video
+            ]
+            json_result = subprocess.run(json_cmd, capture_output=True, encoding='utf-8', errors='replace', check=False).stdout
+            video_info = json.loads(json_result)
+            
+            width = 1920
+            height = 1080
+            if "streams" in video_info and video_info["streams"]:
+                width = int(video_info["streams"][0].get("width", 1920))
+                height = int(video_info["streams"][0].get("height", 1080))
+                print(f"视频尺寸: {width}x{height}")
+            else:
+                print("警告: 未找到视频流信息，使用默认尺寸: 1920x1080")
+        except Exception as e:
+            print(f"警告: 获取视频尺寸失败: {str(e)}，使用默认尺寸: 1920x1080")
+            width = 1920
+            height = 1080
+            
+        # 输出文件名
+        output_video = os.path.splitext(input_video)[0] + "_watermarked" + os.path.splitext(input_video)[1]
+        
+        # 使用简单的水印方式 - 不需要字体文件
+        font_size = 36  # 测试用字体大小
+        watermark_vf = f"drawtext=text='PC':fontsize={font_size}:fontcolor=white@0.3:x=10:y=10"
+        print(f"使用简单水印滤镜: {watermark_vf}")
+        
+        # 构建命令
+        try:
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", input_video,
+                "-vf", watermark_vf,
+                "-c:v", "libx264",
+                "-preset", "medium",
+                "-crf", "23",
+                "-c:a", "copy",
+                "-pix_fmt", "yuv420p",
+                output_video
+            ]
+            
+            print("执行命令:", " ".join(cmd))
+            result = subprocess.run(cmd, check=True, capture_output=True, encoding='utf-8', errors='replace')
+            print(f"水印添加成功！输出文件: {output_video}")
+            
+            # 显示命令输出
+            print("\n命令输出:")
+            print(result.stdout)
+            
+            if result.stderr:
+                print("\n错误信息:")
+                print(result.stderr)
+        except subprocess.CalledProcessError as e:
+            print(f"错误: 添加水印失败: {e}")
+            print("\n命令输出:")
+            print(e.stdout)
+            print("\n错误信息:")
+            print(e.stderr)
+            
+            # 尝试备用方法 - 使用更简单的配置
+            try:
+                print("\n尝试使用备用方法...")
+                backup_cmd = [
+                    "ffmpeg", "-y",
+                    "-i", input_video,
+                    "-vf", "drawtext=text='PC':fontsize=36:fontcolor=white@0.5:x=10:y=10",
+                    "-c:v", "libx264",
+                    "-preset", "ultrafast",  # 使用超快速预设
+                    "-crf", "28",  # 降低质量要求
+                    "-c:a", "copy",
+                    "-pix_fmt", "yuv420p",
+                    output_video
+                ]
+                
+                print("执行备用命令:", " ".join(backup_cmd))
+                result = subprocess.run(backup_cmd, check=True)
+                print(f"使用备用方法添加水印成功！输出文件: {output_video}")
+            except Exception as e2:
+                print(f"备用方法也失败: {str(e2)}")
+        except Exception as e:
+            print(f"执行命令时出错: {str(e)}")
+    
+    # 根据命令行参数执行不同的测试
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "test-watermark":
+            test_watermark()
+        else:
+            print(f"未知的测试命令: {sys.argv[1]}")
+    else:
+        print("请指定测试命令: test-watermark")
